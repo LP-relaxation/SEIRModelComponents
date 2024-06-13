@@ -293,19 +293,19 @@ class VaccineGroup:
 
         if self.v_name == "unvax":
             self.v_in = ()
-            self.v_out = ("v_first",)
+            self.v_out = ("first_dose",)
 
         elif self.v_name == "first_dose":
-            self.v_in = ("v_first",)
-            self.v_out = ("v_second",)
+            self.v_in = ("first_dose",)
+            self.v_out = ("second_dose",)
 
         elif self.v_name == "second_dose":
-            self.v_in = ("v_second", "v_booster")
+            self.v_in = ("second_dose", "booster")
             self.v_out = ()
 
         else:
             self.v_in = ()
-            self.v_out = ("v_booster",)
+            self.v_out = ("booster",)
 
         self.N = N
         self.I0 = I0

@@ -34,9 +34,7 @@ class TimeSeriesManager:
                                                       date_column_name,
                                                       df,
                                                       simulation_datetimes):
-
         df[date_column_name] = pd.to_datetime(df[date_column_name], format=DataPrepConfig.date_format)
-
         for col in df.columns:
             if col != date_column_name:
                 time_series = np.asarray(df[(df[date_column_name] >= simulation_datetimes[0]) &
@@ -47,7 +45,6 @@ class TimeSeriesManager:
                                                              name,
                                                              intervals,
                                                              simulation_datetimes):
-
         time_series = [
             any(
                 dt.datetime.strptime(start, DataPrepConfig.date_format) <= d
@@ -56,7 +53,6 @@ class TimeSeriesManager:
             )
             for d in simulation_datetimes
         ]
-
         self.dict_names[name] = time_series
 
 
@@ -211,24 +207,18 @@ class Vaccine:
         self.pi_reduct = vaccine_data["pi_reduct"]
         self.instance = instance
 
-        self.actual_vaccine_time = [
-            time for time in vaccine_allocation_data["vaccine_time"]
-        ]
-        self.first_dose_time = [
+        self.datetime_first_dose_effective = [
             time + pd.Timedelta(days=self.effect_time)
-            for time in vaccine_allocation_data["vaccine_time"]
-        ]
-        self.second_dose_time = [
-            time + pd.Timedelta(days=self.second_dose_time + self.effect_time)
-            for time in self.first_dose_time
-        ]
+            for time in vaccine_allocation_data["vaccine_time"]]
 
-        self.vaccine_proportion = [
-            amount for amount in vaccine_allocation_data["vaccine_amount"]
-        ]
+        self.datetime_second_dose_effective = [
+            time + pd.Timedelta(days=self.second_dose_time + self.effect_time)
+            for time in self.datetime_first_dose_effective]
+
+        self.vaccine_start_datetime = vaccine_allocation_data["vaccine_time"][0]
+
         self.vaccine_start_time = np.where(
-            np.array(instance.cal.simulation_datetimes) == self.actual_vaccine_time[0]
-        )[0]
+            np.array(instance.cal.simulation_datetimes) == vaccine_allocation_data["vaccine_time"][0])[0]
 
         self.vaccine_allocation = self.define_supply(vaccine_allocation_data,
                                                      booster_allocation_data,
@@ -236,95 +226,92 @@ class Vaccine:
                                                      instance.A,
                                                      instance.L
                                                      )
-        self.event_lookup_dict = self.build_event_lookup_dict()
 
-    def build_event_lookup_dict(self):
+    def define_supply(self,
+                      vaccine_allocation_data,
+                      booster_allocation_data,
+                      N,
+                      A,
+                      L):
         """
-        Must be called after self.vaccine_allocation is updated using self.define_supply
-
-        This method creates a mapping between date and "vaccine events" in historical data
-            corresponding to that date -- so that we can look up whether a vaccine group event occurs,
-            rather than iterating through all items in self.vaccine_allocation
-
-        Creates event_lookup_dict, a dictionary of dictionaries, with the same keys as self.vaccine_allocation,
-            where each key corresponds to a vaccine group ("v_first", "v_second", "v_booster", "v_wane")
-        self.event_lookup_dict[vaccine_type] is a dictionary
-            the same length as self.vaccine_allocation[vaccine_ID]
-        Each key in event_lookup_dict[vaccine_type] is a datetime object and the corresponding value is the
-            i (index) of self.vaccine_allocation[vaccine_type] such that
-            self.vaccine_allocation[vaccine_type][i]["supply"]["time"] matches the datetime object
+        Load vaccine supply and allocation data, and process them.
+        Shift vaccine schedule for waiting vaccine to be effective,
+            second dose and vaccine waning effect and also for booster dose.
         """
 
-        event_lookup_dict = {}
-        for key in self.vaccine_allocation.keys():
-            d = {}
-            counter = 0
-            for allocation_item in self.vaccine_allocation[key]:
-                d[allocation_item["supply"]["time"]] = counter
-                counter += 1
-            event_lookup_dict[key] = d
-        return event_lookup_dict
+        # 10 of these age-risk groups (5 age groups, 2 risk groups)
+        age_risk_columns = [
+            column
+            for column in vaccine_allocation_data.columns
+            if "A" and "R" in column
+        ]
 
-    def event_lookup(self, vaccine_type, date):
-        """
-        Must be called after self.build_event_lookup_dict builds the event lookup dictionary
+        def create_allocation_item(datetime_instance,
+                                   vac_assignment):
+            return {
+                "time": datetime_instance,
+                "assignment": vac_assignment
+            }
 
-        vaccine_type is one of the keys of self.vaccine_allocation ("v_first", "v_second", "v_booster")
-        date is a datetime object
+        def process_allocation(data,
+                               datetime_list):
+            vaccine_allocation_dict = {}
+            for i in range(len(data)):
+                vac_assignment = np.array(data[age_risk_columns].iloc[i]).reshape((A, L))
+                vaccine_allocation_dict[datetime_list[i]] = vac_assignment
+            return vaccine_allocation_dict
 
-        Returns the index i such that self.vaccine_allocation[vaccine_type][i]["supply"]["time"] == date
-        Otherwise, returns None
-        """
+        # Process first dose allocation
+        first_dose_allocation = process_allocation(vaccine_allocation_data, self.datetime_first_dose_effective)
 
-        if date in self.event_lookup_dict[vaccine_type].keys():
-            return self.event_lookup_dict[vaccine_type][date]
+        # Process second dose allocation
+        second_dose_allocation = process_allocation(vaccine_allocation_data[:len(self.datetime_second_dose_effective)],
+                                                    self.datetime_second_dose_effective)
 
-    def compute_num_flow(self, vaccine_list, total_risk_gr, date):
+        # Process booster allocation if data is available
+        if booster_allocation_data is not None:
+            booster_allocation = process_allocation(booster_allocation_data,
+                                                    booster_allocation_data["vaccine_time"])
 
-        N = np.zeros((total_risk_gr, 1))
-        for vaccine_type in vaccine_list:
-            event = self.event_lookup(vaccine_type, date)
-            if event is not None:
-                for i in range(event):
-                    N += self.vaccine_allocation[vaccine_type][i]["assignment"].reshape((total_risk_gr, 1))
-            else:
-                if date > self.vaccine_allocation[vaccine_type][0]["supply"]["time"]:
-                    i = 0
-                    event_date = self.vaccine_allocation[vaccine_type][i]["supply"]["time"]
-                    while event_date < date:
-                        N += self.vaccine_allocation[vaccine_type][i]["assignment"].reshape((total_risk_gr, 1))
-                        if i + 1 == len(self.vaccine_allocation[vaccine_type]):
-                            break
-                        i += 1
-                        event_date = self.vaccine_allocation[vaccine_type][i]["supply"]["time"]
-        return N
+        return {
+            "first_dose": first_dose_allocation,
+            "second_dose": second_dose_allocation,
+            "booster": booster_allocation
+        }
 
-    def get_num_eligible(
-            self, total_population, total_risk_gr, vaccine_group_name, v_in, v_out, date
-    ):
-        """
-        :param total_population: integer, usually N parameter such as instance.N
-        :param total_risk_gr: instance.A x instance.L
-        :param vaccine_group_name: string of vaccine_group_name (see VaccineGroup)
-             ("unvax", "first_dose", "second_dose", "waned")
-        :param v_in: tuple with strings of vaccine_types going "in" to that vaccine group
-        :param v_out: tuple with strings of vaccine_types going "out" of that vaccine group
-        :param date: datetime object
-        :return: list of number eligible people for vaccination at that date, where each element corresponds
-        to age/risk group (list is length A * L).
-                For instance, only those who received their first-dose three weeks ago are eligible to get
-                their second dose vaccine.
-        """
+    def get_num_eligible(self,
+                         total_population,
+                         total_risk_gr,
+                         vaccine_group_name,
+                         v_in,
+                         v_out,
+                         datetime_instance):
 
-        N_in = self.compute_num_flow(v_in, total_risk_gr, date)
-        N_out = self.compute_num_flow(v_out, total_risk_gr, date)
+        N_in = np.zeros((total_risk_gr, 1))
+        N_out = np.zeros((total_risk_gr, 1))
+
+        # LP note to self: could combine v_in and v_out as one function since
+        #   they essentially repeat themselves (one with N_in and one with N_out)
+        for vaccine_type in v_in:
+            event_datetime = self.vaccine_start_datetime
+            while event_datetime < datetime_instance:
+                if event_datetime in self.vaccine_allocation[vaccine_type]:
+                    N_in += self.vaccine_allocation[vaccine_type][event_datetime].reshape((total_risk_gr, 1))
+                event_datetime += pd.Timedelta(days=1)
+
+        for vaccine_type in v_out:
+            event_datetime = self.vaccine_start_datetime
+            while event_datetime < datetime_instance:
+                if event_datetime in self.vaccine_allocation[vaccine_type]:
+                    N_out += self.vaccine_allocation[vaccine_type][event_datetime].reshape((total_risk_gr, 1))
+                event_datetime += pd.Timedelta(days=1)
 
         if vaccine_group_name == "unvax":
             N_eligible = total_population.reshape((total_risk_gr, 1)) - N_out
         elif vaccine_group_name == "waned":
             # Waned compartment does not have incoming vaccine schedule but has outgoing scheduled vaccine. People
             # enter waned compartment with binomial draw. This calculation would return negative value
-            return None
+            return np.zeros((total_risk_gr, 1))
         else:
             N_eligible = N_in - N_out
 
@@ -335,111 +322,6 @@ class Vaccine:
         # )
 
         return N_eligible
-
-    def define_supply(self, vaccine_allocation_data, booster_allocation_data, N, A, L):
-        """
-        Load vaccine supply and allocation data, and process them.
-        Shift vaccine schedule for waiting vaccine to be effective,
-            second dose and vaccine waning effect and also for booster dose.
-        """
-
-        # Each of the following are lists
-        # Each element of the list is a dictionary with keys
-        #   "assignment", "proportion", "within_proportion", "supply"
-        v_first_allocation = []
-        v_second_allocation = []
-        v_booster_allocation = []
-
-        # 10 of these age-risk groups (5 age groups, 2 risk groups)
-        age_risk_columns = [
-            column
-            for column in vaccine_allocation_data.columns
-            if "A" and "R" in column
-        ]
-
-        # LP note to self: can also combine the following because
-        #   the logic is redundant for the different types of allocations
-
-        # Fixed vaccine allocation:
-        for i in range(len(vaccine_allocation_data["A1-R1"])):
-            vac_assignment = np.array(
-                vaccine_allocation_data[age_risk_columns].iloc[i]
-            ).reshape((A, L))
-
-            if np.sum(vac_assignment) > 0:
-                pro_round = vac_assignment / np.sum(vac_assignment)
-            else:
-                pro_round = np.zeros((A, L))
-            within_proportion = vac_assignment / N
-
-            # First dose vaccine allocation:
-            supply_first_dose = {
-                "time": self.first_dose_time[i],
-                "amount": self.vaccine_proportion[i],
-                "type": "first_dose",
-            }
-            allocation_item = {
-                "assignment": vac_assignment,
-                "supply": supply_first_dose,
-                "from": "unvax"
-            }
-            v_first_allocation.append(allocation_item)
-
-            # Second dose vaccine allocation:
-            if i < len(self.second_dose_time):
-                supply_second_dose = {
-                    "time": self.second_dose_time[i],
-                    "amount": self.vaccine_proportion[i],
-                    "type": "second_dose",
-                }
-                allocation_item = {
-                    "assignment": vac_assignment,
-                    "supply": supply_second_dose,
-                    "from": "first_dose"
-                }
-                v_second_allocation.append(allocation_item)
-
-        # Fixed booster vaccine allocation:
-        if booster_allocation_data is not None:
-            self.booster_time = [
-                time for time in booster_allocation_data["vaccine_time"]
-            ]
-            self.booster_proportion = np.array(
-                booster_allocation_data["vaccine_amount"]
-            )
-            for i in range(len(booster_allocation_data["A1-R1"])):
-                vac_assignment = np.array(
-                    booster_allocation_data[age_risk_columns].iloc[i]
-
-                ).reshape((A, L))
-
-                if np.sum(vac_assignment) > 0:
-                    pro_round = vac_assignment / np.sum(vac_assignment)
-                else:
-                    pro_round = np.zeros((A, L))
-                within_proportion = vac_assignment / N
-
-                # Booster dose vaccine allocation:
-                supply_booster_dose = {
-                    "time": self.booster_time[i],
-                    "amount": self.booster_proportion[i],
-                    "type": "booster_dose"
-                }
-                allocation_item = {
-                    "assignment": vac_assignment,
-                    "proportion": pro_round,
-                    "within_proportion": within_proportion,
-                    "supply": supply_booster_dose,
-                    "from": "waned"
-                }
-                v_booster_allocation.append(allocation_item)
-
-        return {
-            "v_first": v_first_allocation,
-            "v_second": v_second_allocation,
-            "v_booster": v_booster_allocation
-        }
-
 
 class EpiParams:
     """
@@ -472,13 +354,6 @@ class EpiParams:
                                        distribution_name,
                                        distribution_params,
                                        rng):
-        """
-        Generates random parameters from a given random stream.
-        Coupled parameters are updated as well.
-        Args:
-            rng (np.random.default_rng): a default_rng instance from numpy.
-        """
-
         random_distribution_function_name = getattr(rng, distribution_name)
         result = random_distribution_function_name(*distribution_params)
 

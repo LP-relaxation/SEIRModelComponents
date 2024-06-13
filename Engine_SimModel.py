@@ -701,7 +701,7 @@ class SimReplication:
             for attribute in self.tracking_vars:
                 setattr(v_group, "_" + attribute, np.zeros((step_size, A, L)))
 
-    def vaccine_schedule(self, t_date, rate_immune):
+    def vaccine_schedule(self, t, rate_immune):
         """
         Mechanically move people between compartments for daily vaccination at the end of a day. We only move people
         between the susceptible compartments but assume that people may receive vaccine while they are already infected
@@ -722,102 +722,87 @@ class SimReplication:
         L = self.instance.L
         N = self.instance.N
 
-        calendar = self.instance.cal.simulation_datetimes
-        t = t_date
-        S_before = np.zeros((5, 2))
+        current_datetime = self.instance.cal.simulation_datetimes[t]
+
         S_temp = {}
         N_temp = {}
 
         for v_group in self.vaccine_groups:
-            S_before += v_group.S
+            # S_before += v_group.S
             S_temp[v_group.v_name] = v_group.S
             N_temp[v_group.v_name] = v_group.get_total_population(A * L)
 
         for v_group in self.vaccine_groups:
             out_sum = np.zeros((A, L))
-            S_out = np.zeros((A * L, 1))
-            N_out = np.zeros((A * L, 1))
 
             for vaccine_type in v_group.v_out:
-                event = self.vaccine.event_lookup(vaccine_type, calendar[t])
-
-                if event is not None:
+                if current_datetime in self.vaccine.vaccine_allocation[vaccine_type]:
                     S_out = np.reshape(
-                        self.vaccine.vaccine_allocation[vaccine_type][event][
-                            "assignment"
-                        ],
+                        self.vaccine.vaccine_allocation[vaccine_type][current_datetime],
                         (A * L, 1),
                     )
 
                     if v_group.v_name == "waned":
-                        N_out = N_temp["waned"] + N_temp["second_dose"]
+                        num_eligible = N_temp["waned"] + N_temp["second_dose"]
                     else:
-                        N_out = self.vaccine.get_num_eligible(
-                            N,
-                            A * L,
-                            v_group.v_name,
-                            v_group.v_in,
-                            v_group.v_out,
-                            calendar[t],
-                        )
+                        num_eligible = self.vaccine.get_num_eligible(N,
+                                                             A * L,
+                                                             v_group.v_name,
+                                                             v_group.v_in,
+                                                             v_group.v_out,
+                                                             current_datetime)
+
                     ratio_S_N = np.array(
                         [
-                            0 if N_out[i] == 0 else float(S_out[i] / N_out[i])
-                            for i in range(len(N_out))
+                            0 if num_eligible[i] == 0 else float(S_out[i] / num_eligible[i])
+                            for i in range(len(num_eligible))
                         ]
                     ).reshape((A, L))
 
                     out_sum += (ratio_S_N * S_temp[v_group.v_name]).astype(int)
 
             in_sum = np.zeros((A, L))
-            S_in = np.zeros((A * L, 1))
-            N_in = np.zeros((A * L, 1))
+
             for vaccine_type in v_group.v_in:
                 for v_g in self.vaccine_groups:
-                    if (
-                            v_g.v_name
-                            == self.vaccine.vaccine_allocation[vaccine_type][0]["from"]
-                    ):
+                    if ((v_g.v_name == "waned" and vaccine_type == "booster") or
+                            (v_g.v_name == "first_dose" and vaccine_type == "second_dose") or
+                            (v_g.v_name == "unvax" and vaccine_type == "first_dose")):
                         v_temp = v_g
 
-                event = self.vaccine.event_lookup(vaccine_type, calendar[t])
-
-                if event is not None:
+                if current_datetime in self.vaccine.vaccine_allocation[vaccine_type]:
                     S_in = np.reshape(
-                        self.vaccine.vaccine_allocation[vaccine_type][event][
-                            "assignment"
-                        ],
+                        self.vaccine.vaccine_allocation[vaccine_type][current_datetime],
                         (A * L, 1),
                     )
 
-                    if v_temp.v_name == "waned":
-                        N_in = N_temp["waned"] + N_temp["second_dose"]
+                    if v_group.v_name == "waned":
+                        num_eligible = N_temp["waned"] + N_temp["second_dose"]
                     else:
-                        N_in = self.vaccine.get_num_eligible(
-                            N,
-                            A * L,
-                            v_temp.v_name,
-                            v_temp.v_in,
-                            v_temp.v_out,
-                            calendar[t],
-                        )
+                        num_eligible = self.vaccine.get_num_eligible(N,
+                                                             A * L,
+                                                             v_temp.v_name,
+                                                             v_temp.v_in,
+                                                             v_temp.v_out,
+                                                             current_datetime)
 
                     ratio_S_N = np.array(
                         [
-                            0 if N_in[i] == 0 else float(S_in[i] / N_in[i])
-                            for i in range(len(N_in))
+                            0 if num_eligible[i] == 0 else float(S_in[i] / num_eligible[i])
+                            for i in range(len(num_eligible))
                         ]
                     ).reshape((A, L))
 
                     in_sum += (ratio_S_N * S_temp[v_temp.v_name]).astype(int)
 
             v_group.S = v_group.S + (np.array(in_sum - out_sum))
-            S_after = np.zeros((5, 2))
 
-        for v_group in self.vaccine_groups:
-            S_after += v_group.S
+        # S_after = np.zeros((5, 2))
 
-        imbalance = np.abs(np.sum(S_before - S_after, axis=(0, 1)))
+        # for v_group in self.vaccine_groups:
+        #     S_after += v_group.S
+        #
+        # imbalance = np.abs(np.sum(S_before - S_after, axis=(0, 1)))
 
         # Note: add this to tests! But take this out of code
         # assert (imbalance < 1e-2).all(), (
