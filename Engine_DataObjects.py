@@ -12,6 +12,8 @@ import pandas as pd
 from pathlib import Path
 from itertools import product
 
+import copy
+
 import datetime as dt
 
 WEEKDAY = 1
@@ -350,6 +352,16 @@ class EpiParams:
             value = np.array(v) if isinstance(v, list) else v
             setattr(self, k, 1 / value if is_inverse else value)
 
+    def save_additional_initial_values_epi_params(self):
+
+        # Important for updating epi params under variant
+
+        self.alpha_gamma_ICU0 = self.alpha_gamma_ICU
+        self.alpha_IH0 = self.alpha_IH
+        self.alpha_mu_ICU0 = self.alpha_mu_ICU
+        self.alpha_IYD0 = self.alpha_IYD
+        self.sigma_E0 = copy.deepcopy(self.sigma_E)
+
     def get_random_sample_scalar_param(self,
                                        is_inverse,
                                        distribution_name,
@@ -367,8 +379,8 @@ class EpiParams:
         self.beta = self.beta0  # Unmitigated transmission rate
         self.YFR = self.IFR / self.tau  # symptomatic fatality ratio (%)
         self.pIH0 = self.pIH  # percent of patients going directly to general ward
-        self.YHR0 = self.YHR  # % of symptomatic infections that go to hospital
-        self.YHR_overall0 = self.YHR_overall
+        self.YHR0 = copy.deepcopy(self.YHR)  # % of symptomatic infections that go to hospital
+        self.YHR_overall0 = copy.deepcopy(self.YHR_overall)
 
         # if gamma_IH and mu are lists, reshape them for right dimension
         self.gamma_IH0 = self.gamma_IH0.reshape(self.gamma_IH0.size, 1)
@@ -378,18 +390,7 @@ class EpiParams:
         self.mu_ICU0 = self.mu_ICU0.reshape(self.mu_ICU0.size, 1)
         self.HICUR0 = self.HICUR
 
-    def variant_update_param(self, new_params):
-        """
-            Update parameters according to variant prevalence.
-            Combined all variant of concerns: delta, omicron, and a new hypothetical variant.
-        """
-        # breakpoint()
-
-        for (k, v) in new_params.items():
-            if k == "sigma_E":
-                setattr(self, k, v)
-            else:
-                setattr(self, k, v * getattr(self, k))
+        self.save_additional_initial_values_epi_params()
 
     @property
     def gamma_ICU(self):

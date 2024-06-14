@@ -52,6 +52,8 @@ import Tools_Optimization_Utilities
 import numpy as np
 import pandas as pd
 
+import psutil
+
 from pathlib import Path
 
 import datetime as dt
@@ -62,6 +64,8 @@ import json
 import time
 
 start_time = time.time()
+
+process = psutil.Process()
 
 transmission_df = pd.read_csv(DataPrepConfig.base_path / "instances" / "austin" / "transmission.csv")
 setup_data = json.load(open(DataPrepConfig.base_path / "instances" / "austin" / "austin_setup.json"))
@@ -148,5 +152,7 @@ print(rep.compute_rsq())
 print(np.sum(rep.ICU_history))
 
 print(time.time() - start_time)
+
+print(process.memory_info().rss)
 
 breakpoint()

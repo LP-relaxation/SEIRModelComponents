@@ -131,19 +131,12 @@ class SimReplication:
         :return: [None]
         """
 
-        self.base_epi = EpiParams(epi_params, rng)
+        self.epi_rand = EpiParams(epi_params, rng)
 
-        # Create a deep copy of the "base" EpiParams instance
-        #   to inherit some attribute values (primitives)
-        epi_rand = copy.deepcopy(self.base_epi)
-
-        # On this copy, sample random parameters and
+        # Sample random parameters and
         #   do some basic updating based on the results
         #   of this sampling
-        epi_rand.setup_base_params()
-
-        # Assign self.epi_rand to this copy
-        self.epi_rand = epi_rand
+        self.epi_rand.setup_base_params()
 
     def init_vaccine_groups(self):
         """
@@ -369,7 +362,7 @@ class SimReplication:
 
         t = t_date
 
-        epi = copy.deepcopy(self.epi_rand)
+        epi = self.epi_rand
 
         if t <= self.fixed_kappa_end_date:
             # If the transmission reduction is fixed don't call the policy object.
@@ -411,17 +404,11 @@ class SimReplication:
                 if v_group.v_name != 'unvax':
                     v_group.variant_update(vaccine_params_under_variants, total_variant_prevalence)
 
-            epi.variant_update_param(epi_params_under_variants)
+            for (epi_param_name, val) in epi_params_under_variants.items():
+               setattr(epi, epi_param_name, val * getattr(epi, epi_param_name + "0"))
 
-            # for (epi_param_name, val) in epi_params_under_variants.items():
-            #    setattr(self, k, v * getattr(self, k))
+            epi.sigma_E = self.instance.variant_pool.get_sigma_E_under_variant(epi.sigma_E0, t_since_variant)
 
-            # {'alpha_gamma_ICU': 0.9815, 'alpha_IH': 1.0, 'alpha_mu_ICU': 0.997, 'alpha_IYD': 0.99611, 'beta': 1.0065, 'YHR': 1.008, 'YHR_overall': 1.008}
-
-
-            epi.sigma_E = self.instance.variant_pool.get_sigma_E_under_variant(epi.sigma_E, t_since_variant)
-
-            breakpoint()
         else:
             immune_evasion = 0
 
