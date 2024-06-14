@@ -383,12 +383,15 @@ class EpiParams:
             Update parameters according to variant prevalence.
             Combined all variant of concerns: delta, omicron, and a new hypothetical variant.
         """
+        # breakpoint()
+
         for (k, v) in new_params.items():
             if k == "sigma_E":
                 setattr(self, k, v)
             else:
                 setattr(self, k, v * getattr(self, k))
 
+    @property
     def gamma_ICU(self):
         """
         Adjust hospital dynamics according to real data with self.alpha_ params.
@@ -397,10 +400,12 @@ class EpiParams:
         """
         return self.gamma_ICU0 * (1 + self.alpha_gamma_ICU)
 
+    @property
     def gamma_IH(self):
         """ This one decrease the rate of recovering from IH."""
         return self.gamma_IH0 * (1 - self.alpha_IH)
 
+    @property
     def mu_ICU(self):
         """ This one increase the rate of death from ICU. """
         return self.mu_ICU0 * (1 + self.alpha_mu_ICU)
@@ -422,6 +427,7 @@ class EpiParams:
         except:
             self.etaICU = self.etaICU0.copy()
 
+    @property
     def omega_P(self):
         """ infectiousness of pre-symptomatic relative to symptomatic """
         return np.array(
@@ -442,14 +448,17 @@ class EpiParams:
             ]
         )
 
+    @property
     def omega_PA(self):
         """ infectiousness of pre-asymptomatic individuals relative to IA for age-risk group a, r """
         return self.omega_IA * self.omega_P
 
+    @property
     def omega_PY(self):
         """ infectiousness of pre-symptomatic individuals relative to IY for age-risk group a, r"""
         return self.omega_IY * self.omega_P
 
+    @property
     def pi(self):
         """ rate-adjusted proportion of symptomatic individuals who go to the hospital for age-risk group a, r """
         return np.array(
@@ -461,14 +470,17 @@ class EpiParams:
             ]
         )
 
+    @property
     def nu(self):
         """ rate-adjusted proportion of general ward patients transferred to ICU for age group a """
         return self.gamma_IH * self.HICUR / (self.etaICU + (self.gamma_IH - self.etaICU) * self.HICUR)
 
+    @property
     def HFR(self):
         """ symptomatic fatality ratio divided by symptomatic hospitalization rate """
         return self.YFR / self.YHR
 
+    @property
     def nu_ICU(self):
         return self.gamma_ICU0 * self.ICUFR / (self.mu_ICU0 + (self.gamma_ICU0 - self.mu_ICU0) * self.ICUFR)
 
@@ -543,40 +555,62 @@ class VariantPool:
         """
         self.variants_data = variants_data
         self.variants_prev = variants_prev
-        for (k, v) in self.variants_data['epi_params']["immune_evasion"].items():
+        self.variant_names = variants_data["variant_names"]
+        for (k, v) in self.variants_data["epi_params_under_variants"]["immune_evasion"].items():
             # calculate the rate of exponential immune evasion according to half-life (median) value:
             v["immune_evasion_max"] = log(2) / (v["half_life"] * 30) if v["half_life"] != 0 else 0
             v["start_date"] = pd.to_datetime(v["start_date"])
             v["peak_date"] = pd.to_datetime(v["peak_date"])
             v["end_date"] = pd.to_datetime(v["end_date"])
 
-    def update_params_coef(self, t: int, sigma_E: float):
+    def get_total_variant_prevalence(self, t_since_variant):
+        return self.variants_prev.iloc[t_since_variant]["delta"] + self.variants_prev.iloc[t_since_variant]["omicron"]
+
+    def get_sigma_E_under_variant(self, sigma_E, t_since_variant):
+        total_variant_prevalence = self.get_total_variant_prevalence(t_since_variant)
+
+        return sum(1 / (1/sigma_E - self.variants_data["epi_params_under_variants"]["sigma_E"][variant_name]) * \
+               self.variants_prev.iloc[t_since_variant][variant_name] for variant_name in self.variant_names) + \
+               (1 - total_variant_prevalence) * sigma_E
+
+    def get_epi_params_under_variants(self, t_since_variant: int):
         """
         update epi parameters and vaccine parameters according to prevalence of different variances.
         :param t: current date
         :param sigma_E: current sampled sigma_E value in the simulation.
         :return: new set of params and total variant prev.
         """
-        new_epi_params_coef = {}
-        new_vax_params = {}
-        for (key, val) in self.variants_data['epi_params'].items():
-            var_prev = sum(self.variants_prev[v][t] for v in val)
-            if key == "sigma_E":
-                # The parameter value of the triangular distribution is shifted with the Delta variant. Instead of
-                # returning a percent increase in the parameter value, directly calculate the new sigma_E.
-                new_epi_params_coef[key] = sum(1 / (1 / sigma_E - val[v]) * self.variants_prev[v][t] for v in val) + (
-                        1 - var_prev) * sigma_E
-            elif key == "immune_evasion":
+
+        epi_params_under_variants = {}
+
+
+        for (epi_param_name, epi_dict) in self.variants_data["epi_params_under_variants"].items():
+            total_variant_prevalence = self.get_total_variant_prevalence(t_since_variant)
+            if epi_param_name == "sigma_E":
+                # sigma_E is computed differently than the other epi_params_under_variants variables
+                pass
+            elif epi_param_name == "immune_evasion":
                 pass
             else:
                 # For other parameters calculate the change in the value as a coefficent:
-                new_epi_params_coef[key] = 1 + sum(self.variants_prev[v][t] * (val[v] - 1) for v in val)
+                epi_params_under_variants[epi_param_name] = 1 + sum(self.variants_prev.iloc[t_since_variant][variant_name] *
+                                                              (self.variants_data["epi_params_under_variants"][epi_param_name][variant_name] - 1)
+                                                              for variant_name in self.variant_names)
+
+        return epi_params_under_variants
+
+    def get_vaccine_params_under_variants(self, t_since_variant: int):
+
+        vaccine_params_under_variants = {}
 
         # Calculate the new vaccine efficacy according to the variant values:
-        for (key, val) in self.variants_data['vax_params'].items():
-            for (k_dose, v_dose) in val.items():
-                new_vax_params[(key, k_dose)] = sum(self.variants_prev[v][t] * v_dose[v] for v in v_dose)
-        return new_epi_params_coef, new_vax_params, var_prev
+        for (vaccine_param_name, vaccine_dict) in self.variants_data["vaccine_params_under_variants"].items():
+            for (vaccine_group_name, vaccine_group_dict) in vaccine_dict.items():
+                vaccine_params_under_variants[(vaccine_param_name, vaccine_group_name)] = \
+                    sum(self.variants_prev.iloc[t_since_variant][variant_name] *
+                        vaccine_group_dict[variant_name] for variant_name in self.variant_names)
+
+        return vaccine_params_under_variants
 
     def immune_evasion(self, immune_evasion_base: float, t):
         """
@@ -600,7 +634,7 @@ class VariantPool:
         :param t: current iterate
         :return: the immune evasion rate for a particular date.
         """
-        for (k, v) in self.variants_data['epi_params']["immune_evasion"].items():
+        for (k, v) in self.variants_data["epi_params_under_variants"]["immune_evasion"].items():
             if v["start_date"] <= t <= v["peak_date"]:
                 days = (v["peak_date"] - v["start_date"]).days
                 return (t - v["start_date"]).days * (

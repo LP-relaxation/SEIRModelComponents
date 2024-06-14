@@ -398,15 +398,30 @@ class SimReplication:
             )
 
         if calendar[t] >= self.instance.variant_start:
-            days_since_variant_start = (calendar[t] - self.instance.variant_start).days
-            new_epi_params_coef, new_vax_params, var_prev = self.instance.variant_pool.update_params_coef(
-                days_since_variant_start, epi.sigma_E)
+            t_since_variant = (calendar[t] - self.instance.variant_start).days
+
+            epi_params_under_variants = self.instance.variant_pool.get_epi_params_under_variants(t_since_variant)
+            vaccine_params_under_variants = self.instance.variant_pool.get_vaccine_params_under_variants(t_since_variant)
+
             # Assume immune evasion starts with the variants.
             immune_evasion = self.instance.variant_pool.immune_evasion(epi.immune_evasion, calendar[t])
             for v_group in self.vaccine_groups:
+
+                total_variant_prevalence = self.instance.variant_pool.get_total_variant_prevalence(t_since_variant)
                 if v_group.v_name != 'unvax':
-                    v_group.variant_update(new_vax_params, var_prev)
-            epi.variant_update_param(new_epi_params_coef)
+                    v_group.variant_update(vaccine_params_under_variants, total_variant_prevalence)
+
+            epi.variant_update_param(epi_params_under_variants)
+
+            # for (epi_param_name, val) in epi_params_under_variants.items():
+            #    setattr(self, k, v * getattr(self, k))
+
+            # {'alpha_gamma_ICU': 0.9815, 'alpha_IH': 1.0, 'alpha_mu_ICU': 0.997, 'alpha_IYD': 0.99611, 'beta': 1.0065, 'YHR': 1.008, 'YHR_overall': 1.008}
+
+
+            epi.sigma_E = self.instance.variant_pool.get_sigma_E_under_variant(epi.sigma_E, t_since_variant)
+
+            breakpoint()
         else:
             immune_evasion = 0
 
