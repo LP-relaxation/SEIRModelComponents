@@ -227,6 +227,8 @@ class Vaccine:
                                                      instance.L
                                                      )
 
+        self.num_eligible_dict = {}
+
     def define_supply(self,
                       vaccine_allocation_data,
                       booster_allocation_data,
@@ -279,49 +281,48 @@ class Vaccine:
             "booster": booster_allocation
         }
 
-    def get_num_eligible(self,
-                         total_population,
-                         total_risk_gr,
-                         vaccine_group_name,
-                         v_in,
-                         v_out,
-                         datetime_instance):
+    def create_num_eligible_dict(self,
+                                 total_population,
+                                 total_risk_gr,
+                                 list_of_vaccine_groups,
+                                 simulation_end_datetime):
 
-        N_in = np.zeros((total_risk_gr, 1))
-        N_out = np.zeros((total_risk_gr, 1))
+        num_eligible_dict = {}
 
-        # LP note to self: could combine v_in and v_out as one function since
-        #   they essentially repeat themselves (one with N_in and one with N_out)
-        for vaccine_type in v_in:
+        for v_group in list_of_vaccine_groups:
+            num_eligible_dict[v_group.v_name] = {}
+
+        for v_group in list_of_vaccine_groups:
             event_datetime = self.vaccine_start_datetime
-            while event_datetime < datetime_instance:
-                if event_datetime in self.vaccine_allocation[vaccine_type]:
-                    N_in += self.vaccine_allocation[vaccine_type][event_datetime].reshape((total_risk_gr, 1))
+            N_in_cumulative = np.zeros((total_risk_gr, 1))
+            N_out_cumulative = np.zeros((total_risk_gr, 1))
+            while event_datetime <= simulation_end_datetime:
+                for vaccine_type in v_group.v_in:
+                    if event_datetime in self.vaccine_allocation[vaccine_type]:
+                        N_in_cumulative += self.vaccine_allocation[vaccine_type][event_datetime].reshape((total_risk_gr, 1))
+                for vaccine_type in v_group.v_out:
+                    if event_datetime in self.vaccine_allocation[vaccine_type]:
+                        N_out_cumulative += self.vaccine_allocation[vaccine_type][event_datetime].reshape((total_risk_gr, 1))
                 event_datetime += pd.Timedelta(days=1)
 
-        for vaccine_type in v_out:
-            event_datetime = self.vaccine_start_datetime
-            while event_datetime < datetime_instance:
-                if event_datetime in self.vaccine_allocation[vaccine_type]:
-                    N_out += self.vaccine_allocation[vaccine_type][event_datetime].reshape((total_risk_gr, 1))
-                event_datetime += pd.Timedelta(days=1)
+                if v_group.v_name == "unvax":
+                    num_eligible = total_population.reshape((total_risk_gr, 1)) - N_out_cumulative
+                elif v_group.v_name == "waned":
+                    # Waned compartment does not have incoming vaccine schedule but has outgoing scheduled vaccine. People
+                    # enter waned compartment with binomial draw. This calculation would return negative value
+                    num_eligible = np.zeros((total_risk_gr, 1))
+                else:
+                    num_eligible = N_in_cumulative - N_out_cumulative
 
-        if vaccine_group_name == "unvax":
-            N_eligible = total_population.reshape((total_risk_gr, 1)) - N_out
-        elif vaccine_group_name == "waned":
-            # Waned compartment does not have incoming vaccine schedule but has outgoing scheduled vaccine. People
-            # enter waned compartment with binomial draw. This calculation would return negative value
-            return np.zeros((total_risk_gr, 1))
-        else:
-            N_eligible = N_in - N_out
+                num_eligible_dict[v_group.v_name][event_datetime] = num_eligible
+
+        self.num_eligible_dict = num_eligible_dict
 
         # Note: add this to tests! But take this out of code
         # assert (N_eligible > -1e-2).all(), (
         #     f"fPop negative eligible individuals for vaccination in vaccine group {vaccine_group_name}"
         #     f"{N_eligible} at time {date}"
         # )
-
-        return N_eligible
 
 class EpiParams:
     """

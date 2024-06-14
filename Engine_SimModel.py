@@ -61,6 +61,11 @@ class SimReplication:
         self.init_epi(epi_params, self.rng)
         self.init_vaccine_groups()
 
+        self.vaccine.create_num_eligible_dict(self.instance.N,
+                                              A*L,
+                                              self.vaccine_groups,
+                                              self.instance.cal.simulation_datetimes[-1])
+
         # Initialize data structures to track ICU, IH, ToIHT, ToIY
         # These statistics or data we look at changes a lot over time
         # better to keep them in a list to modify.
@@ -745,12 +750,7 @@ class SimReplication:
                     if v_group.v_name == "waned":
                         num_eligible = N_temp["waned"] + N_temp["second_dose"]
                     else:
-                        num_eligible = self.vaccine.get_num_eligible(N,
-                                                             A * L,
-                                                             v_group.v_name,
-                                                             v_group.v_in,
-                                                             v_group.v_out,
-                                                             current_datetime)
+                        num_eligible = self.vaccine.num_eligible_dict[v_group.v_name][current_datetime]
 
                     ratio_S_N = np.array(
                         [
@@ -779,12 +779,7 @@ class SimReplication:
                     if v_group.v_name == "waned":
                         num_eligible = N_temp["waned"] + N_temp["second_dose"]
                     else:
-                        num_eligible = self.vaccine.get_num_eligible(N,
-                                                             A * L,
-                                                             v_temp.v_name,
-                                                             v_temp.v_in,
-                                                             v_temp.v_out,
-                                                             current_datetime)
+                        num_eligible = self.vaccine.num_eligible_dict[v_temp.v_name][current_datetime]
 
                     ratio_S_N = np.array(
                         [

@@ -59,6 +59,10 @@ import json
 
 ###############################################################################
 
+import time
+
+start_time = time.time()
+
 transmission_df = pd.read_csv(DataPrepConfig.base_path / "instances" / "austin" / "transmission.csv")
 setup_data = json.load(open(DataPrepConfig.base_path / "instances" / "austin" / "austin_setup.json"))
 
@@ -142,5 +146,7 @@ rep.simulate_time_period(945)
 
 print(rep.compute_rsq())
 print(np.sum(rep.ICU_history))
+
+print(time.time() - start_time)
 
 breakpoint()
