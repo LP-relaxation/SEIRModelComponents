@@ -94,19 +94,8 @@ class SimReplication:
 
         # Tuples of variable names for organization purposes
         self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
-        self.tracking_vars = (
-            "IYIH",
-            "IYICU",
-            "IHICU",
-            "ToICU",
-            "ToIHT",
-            "ToICUD",
-            "ToIYD",
-            "ToIA",
-            "ToIY",
-            "ToRS",
-            "ToSS"
-        )
+        self.tracking_vars = ("IYIH", "IYICU", "IHICU", "ToICU", "ToIHT", "ToICUD",
+                              "ToIYD", "ToIA", "ToIY", "ToRS", "ToSS")
 
     def init_rng(self):
         """
@@ -681,24 +670,16 @@ class SimReplication:
                 v_group._ToIY[_t] = PYIY
 
         for v_group in self.vaccine_groups:
-            # End of the daily discretization
             for attribute in self.state_vars:
-                setattr(
-                    v_group,
-                    attribute,
-                    getattr(v_group, "_" + attribute)[step_size].copy(),
-                )
+                setattr(v_group, attribute, getattr(v_group, "_" + attribute)[step_size].copy())
 
             for attribute in self.tracking_vars:
-                setattr(
-                    v_group, attribute, getattr(v_group, "_" + attribute).sum(axis=0)
-                )
+                setattr(v_group, attribute, getattr(v_group, "_" + attribute).sum(axis=0))
 
         if t >= self.vaccine.vaccine_start_time:
             self.vaccine_schedule(t, rate_immune)
 
         for v_group in self.vaccine_groups:
-
             for attribute in self.state_vars:
                 setattr(v_group, "_" + attribute, np.zeros((step_size + 1, A, L)))
                 vars(v_group)["_" + attribute][0] = vars(v_group)[attribute]

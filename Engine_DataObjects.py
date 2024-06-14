@@ -389,7 +389,6 @@ class EpiParams:
             else:
                 setattr(self, k, v * getattr(self, k))
 
-    @property
     def gamma_ICU(self):
         """
         Adjust hospital dynamics according to real data with self.alpha_ params.
@@ -398,12 +397,10 @@ class EpiParams:
         """
         return self.gamma_ICU0 * (1 + self.alpha_gamma_ICU)
 
-    @property
     def gamma_IH(self):
         """ This one decrease the rate of recovering from IH."""
         return self.gamma_IH0 * (1 - self.alpha_IH)
 
-    @property
     def mu_ICU(self):
         """ This one increase the rate of death from ICU. """
         return self.mu_ICU0 * (1 + self.alpha_mu_ICU)
@@ -425,7 +422,6 @@ class EpiParams:
         except:
             self.etaICU = self.etaICU0.copy()
 
-    @property
     def omega_P(self):
         """ infectiousness of pre-symptomatic relative to symptomatic """
         return np.array(
@@ -446,17 +442,14 @@ class EpiParams:
             ]
         )
 
-    @property
     def omega_PA(self):
         """ infectiousness of pre-asymptomatic individuals relative to IA for age-risk group a, r """
         return self.omega_IA * self.omega_P
 
-    @property
     def omega_PY(self):
         """ infectiousness of pre-symptomatic individuals relative to IY for age-risk group a, r"""
         return self.omega_IY * self.omega_P
 
-    @property
     def pi(self):
         """ rate-adjusted proportion of symptomatic individuals who go to the hospital for age-risk group a, r """
         return np.array(
@@ -468,17 +461,14 @@ class EpiParams:
             ]
         )
 
-    @property
     def nu(self):
         """ rate-adjusted proportion of general ward patients transferred to ICU for age group a """
         return self.gamma_IH * self.HICUR / (self.etaICU + (self.gamma_IH - self.etaICU) * self.HICUR)
 
-    @property
     def HFR(self):
         """ symptomatic fatality ratio divided by symptomatic hospitalization rate """
         return self.YFR / self.YHR
 
-    @property
     def nu_ICU(self):
         return self.gamma_ICU0 * self.ICUFR / (self.mu_ICU0 + (self.gamma_ICU0 - self.mu_ICU0) * self.ICUFR)
 
