@@ -423,7 +423,7 @@ class SimReplication:
         epi.update_icu_all(t, self.time_series_manager)
 
         step_size = self.step_size
-        binomial_transition = self.get_binomial_transition_quantity
+        binomial_transition = self.binomial_transition
 
         nu_ICU = epi.nu_ICU
         nu = epi.nu
@@ -513,34 +513,26 @@ class SimReplication:
 
                 # self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
 
+                _dSE = binomial_transition(_S_t, (1 - v_group.v_beta_reduct) * dSprob_sum)
+
+                # If there is immune evasion, there will be two outgoing arcs from S_vax.
+                # Infected people move to E compartment.
+                # People with waned immunity will go the S_waned compartment.
+                # _dS: total rate for leaving S compartment.
+                # _dSE: adjusted rate for entering E compartment.
+                # _dSWaned: adjusted rate for entering S_waned (self.vaccine_groups[3]._S) compartment.
                 if v_group.v_name == "second_dose":
-                    # If there is immune evasion, there will be two outgoing arcs from S_vax.
-                    # Infected people move to E compartment.
-                    # People with waned immunity will go the S_waned compartment.
-                    # _dS: total rate for leaving S compartment.
-                    # _dSE: adjusted rate for entering E compartment.
-                    # _dSR: adjusted rate for entering S_waned (self.vaccine_groups[3]._S) compartment.
-
-                    _dSE = binomial_transition(_S_t, (1 - v_group.v_beta_reduct) * dSprob_sum)
-                    _dSR = binomial_transition(_S_t, rate_immune)
-                    _dS = _dSR + _dSE
-
-                    E_out = binomial_transition(_E_t, rate_E)
-                    v_group._E[_t + 1] = _E_t + _dSE - E_out
-
-                    self.vaccine_groups[3]._S[_t + 1] = (
-                            self.vaccine_groups[3]._S[_t + 1] + _dSR
-                    )
-                    v_group._ToVaccineInducedImmunityS[_t] = _dSR
+                    _dSWaned = binomial_transition(_S_t, rate_immune)
                 else:
+                    _dSWaned = 0
 
-                    _dS = binomial_transition(_S_t, (1 - v_group.v_beta_reduct) * dSprob_sum)
+                _dS = _dSWaned + _dSE
 
-                    # Dynamics for E
-                    E_out = binomial_transition(_E_t, rate_E)
-                    v_group._E[_t + 1] = _E_t + _dS - E_out
+                E_out = binomial_transition(_E_t, rate_E)
+                v_group._E[_t + 1] = _E_t + _dSE - E_out
 
-                    v_group._ToVaccineInducedImmunityS[_t] = 0
+                self.vaccine_groups[3]._S[_t + 1] += _dSWaned
+                v_group._ToVaccineInducedImmunityS[_t] = _dSWaned
 
                 immune_escape_R = binomial_transition(_R_t, rate_immune)
 
@@ -551,9 +543,7 @@ class SimReplication:
                 v_group._S[_t + 1] += _S_t - _dS
 
                 # Dynamics for PY
-                EPY = binomial_transition(
-                    E_out, epi.tau * (1 - v_group.v_tau_reduct)
-                )
+                EPY = binomial_transition(E_out, epi.tau * (1 - v_group.v_tau_reduct))
                 PYIY = binomial_transition(_PY_t, rate_PYIY)
                 v_group._PY[_t + 1] = _PY_t + EPY - PYIY
 
@@ -567,95 +557,35 @@ class SimReplication:
                 v_group._IA[_t + 1] = _IA_t + PAIA - IAR
 
                 # Dynamics for IY
-                rate_IYR = discrete_approx(
-                    np.array(
-                        [
-                            [
-                                (1 - epi.pi[a, l] * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * (1 - epi.alpha_IYD)
-                                for l in range(L)
-                            ]
-                            for a in range(A)
-                        ]
-                    ),
-                    step_size,
-                )
-                rate_IYD = discrete_approx(
-                    np.array(
-                        [
-                            [(1 - epi.pi[a, l] * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * epi.alpha_IYD for l in
-                             range(L)]
-                            for a in range(A)
-                        ]
-                    ),
-                    step_size,
-                )
+                rate_IYR = discrete_approx(np.array((1 - epi.pi * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * (1 - epi.alpha_IYD)), step_size)
+                rate_IYD = discrete_approx(np.array((1 - epi.pi * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * epi.alpha_IYD), step_size)
+
                 IYR = binomial_transition(_IY_t, rate_IYR)
                 IYD = binomial_transition(_IY_t - IYR, rate_IYD)
 
-                rate_IYH = discrete_approx(
-                    np.array(
-                        [
-                            [(epi.pi[a, l]) * (1 - v_group.v_pi_reduct) * epi.Eta[a] * epi.pIH for l in range(L)]
-                            for a in range(A)
-                        ]
-                    ),
-                    step_size,
-                )
-                rate_IYICU = discrete_approx(
-                    np.array(
-                        [
-                            [(epi.pi[a, l]) * (1 - v_group.v_pi_reduct) * epi.Eta[a] * (1 - epi.pIH) for l in range(L)]
-                            for a in range(A)
-                        ]
-                    ),
-                    step_size,
-                )
+                rate_IYH = discrete_approx(np.array(epi.pi * (1 - v_group.v_pi_reduct) * epi.pIH) * np.expand_dims(epi.Eta, axis=1), step_size)
+                rate_IYICU = discrete_approx(np.array(epi.pi * (1 - v_group.v_pi_reduct) * (1-epi.pIH)) * np.expand_dims(epi.Eta, axis=1), step_size)
 
-                v_group._IYIH[_t] = binomial_transition(
-                    _IY_t - IYR - IYD, rate_IYH
-                )
-
+                v_group._IYIH[_t] = binomial_transition(_IY_t - IYR - IYD, rate_IYH)
                 _IYIH_t = v_group._IYIH[_t]
 
-                v_group._IYICU[_t] = binomial_transition(
-                    _IY_t - IYR - IYD - _IYIH_t, rate_IYICU
-                )
-
+                v_group._IYICU[_t] = binomial_transition(_IY_t - IYR - IYD - _IYIH_t, rate_IYICU)
                 _IYICU_t = v_group._IYICU[_t]
 
-                v_group._IY[_t + 1] = (
-                        _IY_t
-                        + PYIY
-                        - IYR
-                        - IYD
-                        - _IYIH_t
-                        - _IYICU_t
-                )
+                v_group._IY[_t + 1] = (_IY_t + PYIY - IYR - IYD - _IYIH_t - _IYICU_t)
 
                 # Dynamics for IH
                 IHR = binomial_transition(_IH_t, rate_IHR)
-                v_group._IHICU[_t] = binomial_transition(
-                    _IH_t - IHR, rate_IHICU
-                )
+                v_group._IHICU[_t] = binomial_transition(_IH_t - IHR, rate_IHICU)
 
                 _IHICU_t = v_group._IHICU[_t]
 
-                v_group._IH[_t + 1] = (
-                        _IH_t + _IYIH_t - IHR - _IHICU_t
-                )
+                v_group._IH[_t + 1] = (_IH_t + _IYIH_t - IHR - _IHICU_t)
 
                 # Dynamics for ICU
                 ICUR = binomial_transition(_ICU_t, rate_ICUR)
-                ICUD = binomial_transition(
-                    _ICU_t - ICUR, rate_ICUD
-                )
-                v_group._ICU[_t + 1] = (
-                        _ICU_t
-                        + _IHICU_t
-                        - ICUD
-                        - ICUR
-                        + _IYICU_t
-                )
+                ICUD = binomial_transition(_ICU_t - ICUR, rate_ICUD)
+                v_group._ICU[_t + 1] = (_ICU_t + _IHICU_t - ICUD - ICUR + _IYICU_t)
                 v_group._ToICU[_t] = _IYICU_t + _IHICU_t
                 v_group._ToIHT[_t] = _IYICU_t + _IYIH_t
 
@@ -808,7 +738,7 @@ class SimReplication:
 
         self.next_t = 0
 
-    def get_binomial_transition_quantity(self, n, p):
+    def binomial_transition(self, n, p):
 
         '''
         Either returns mean value of binomial distribution

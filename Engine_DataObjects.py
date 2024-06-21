@@ -337,6 +337,10 @@ class EpiParams:
         self.assign_random_epi_params(params, rng)
         self.assign_deterministic_epi_params(params)
 
+        self.phi_all_extended = self.phi_all[:, np.newaxis, :, np.newaxis] * np.ones((1, 2, 1, 2))
+        self.phi_school_extended = self.phi_school[:, np.newaxis, :, np.newaxis] * np.ones((1, 2, 1, 2))
+        self.phi_work_extended = self.phi_work[:, np.newaxis, :, np.newaxis] * np.ones((1, 2, 1, 2))
+
     def assign_random_epi_params(self, epi_params_setup_info, rng):
         for k, v in epi_params_setup_info["random_params"].items():
             is_inverse = (k in epi_params_setup_info["list_names_inverse_params"])
@@ -352,16 +356,6 @@ class EpiParams:
             is_inverse = k in epi_params_setup_info["list_names_inverse_params"]
             value = np.array(v) if isinstance(v, list) else v
             setattr(self, k, 1 / value if is_inverse else value)
-
-    def save_additional_initial_values_epi_params(self):
-
-        # Important for updating epi params under variant
-
-        self.alpha_gamma_ICU0 = self.alpha_gamma_ICU
-        self.alpha_IH0 = self.alpha_IH
-        self.alpha_mu_ICU0 = self.alpha_mu_ICU
-        self.alpha_IYD0 = self.alpha_IYD
-        self.sigma_E0 = copy.deepcopy(self.sigma_E)
 
     def get_random_sample_scalar_param(self,
                                        is_inverse,
@@ -391,7 +385,12 @@ class EpiParams:
         self.mu_ICU0 = self.mu_ICU0.reshape(self.mu_ICU0.size, 1)
         self.HICUR0 = self.HICUR
 
-        self.save_additional_initial_values_epi_params()
+        # Important for updating epi params under variant
+        self.alpha_gamma_ICU0 = self.alpha_gamma_ICU
+        self.alpha_IH0 = self.alpha_IH
+        self.alpha_mu_ICU0 = self.alpha_mu_ICU
+        self.alpha_IYD0 = self.alpha_IYD
+        self.sigma_E0 = copy.deepcopy(self.sigma_E)
 
     @property
     def gamma_ICU(self):
@@ -433,22 +432,9 @@ class EpiParams:
     def omega_P(self):
         """ infectiousness of pre-symptomatic relative to symptomatic """
         return np.array(
-            [
-                (
-                        self.tau
-                        * self.omega_IY
-                        * (
-                                self.YHR_overall[a] / self.Eta[a]
-                                + (1 - self.YHR_overall[a]) / self.gamma_IY
-                        )
-                        + (1 - self.tau) * self.omega_IA / self.gamma_IA
-                )
-                / (self.tau * self.omega_IY / self.rho_Y + (1 - self.tau) * self.omega_IA / self.rho_A)
-                * self.pp
-                / (1 - self.pp)
-                for a in range(len(self.YHR_overall))
-            ]
-        )
+                (self.tau * self.omega_IY * (self.YHR_overall / self.Eta + (1 - self.YHR_overall) / self.gamma_IY)
+                 + (1 - self.tau) * self.omega_IA / self.gamma_IA)
+                / (self.tau * self.omega_IY / self.rho_Y + (1 - self.tau) * self.omega_IA / self.rho_A) * self.pp / (1 - self.pp))
 
     @property
     def omega_PA(self):
@@ -463,14 +449,8 @@ class EpiParams:
     @property
     def pi(self):
         """ rate-adjusted proportion of symptomatic individuals who go to the hospital for age-risk group a, r """
-        return np.array(
-            [
-                self.YHR[a]
-                * self.gamma_IY
-                / (self.Eta[a] + (self.gamma_IY - self.Eta[a]) * self.YHR[a])
-                for a in range(len(self.YHR))
-            ]
-        )
+        return np.array(self.YHR * self.gamma_IY / (np.expand_dims(self.Eta, axis=1) +
+                                                    (self.gamma_IY - np.expand_dims(self.Eta, axis=1)) * self.YHR))
 
     @property
     def nu(self):
@@ -498,49 +478,34 @@ class EpiParams:
         A = len(demographics)  # number of age groups
         L = len(demographics[0])  # number of risk groups
         d = demographics  # A x L demographic data
-        phi_all_extended = np.zeros((A, L, A, L))
-        phi_school_extended = np.zeros((A, L, A, L))
-        phi_work_extended = np.zeros((A, L, A, L))
-        for a, b in product(range(A), range(A)):
-            phi_ab_split = np.array(
-                [
-                    [d[b, 0], d[b, 1]],
-                    [d[b, 0], d[b, 1]],
-                ]
-            )
-            phi_ab_split = phi_ab_split / phi_ab_split.sum(1)
-            phi_ab_split = 1 + 0 * phi_ab_split / phi_ab_split.sum(1)
-            phi_all_extended[a, :, b, :] = self.phi_all[a, b] * phi_ab_split
-            phi_school_extended[a, :, b, :] = self.phi_school[a, b] * phi_ab_split
-            phi_work_extended[a, :, b, :] = self.phi_work[a, b] * phi_ab_split
+
+        # breakpoint()
 
         # Apply school closure and social distance
         # Assumes 95% reduction on last age group and high risk cocooning
 
+        # breakpoint()
+
+        phi_all_extended = self.phi_all_extended
+        phi_school_extended = self.phi_school_extended
+        phi_work_extended = self.phi_work_extended
+
+        # Initialize the base phi_age_risk_copy based on the day_type
         if day_type == 1:  # Weekday
-            phi_age_risk = (1 - social_distance) * (
-                    phi_all_extended - school * phi_school_extended
-            )
-            if cocooning > 0:
-                phi_age_risk_copy = phi_all_extended - school * phi_school_extended
-        elif day_type == 2 or day_type == 3:  # is a weekend or holiday
-            phi_age_risk = (1 - social_distance) * (
-                    phi_all_extended - phi_school_extended - phi_work_extended
-            )
-            if cocooning > 0:
-                phi_age_risk_copy = (
-                        phi_all_extended - phi_school_extended - phi_work_extended
-                )
+            phi_age_risk_copy = phi_all_extended - school * phi_school_extended
+        elif day_type == 2 or day_type == 3:  # Weekend or holiday
+            phi_age_risk_copy = phi_all_extended - phi_school_extended - phi_work_extended
         else:
-            phi_age_risk = (1 - social_distance) * (
-                    phi_all_extended - phi_school_extended
-            )
-            if cocooning > 0:
-                phi_age_risk_copy = phi_all_extended - phi_school_extended
+            phi_age_risk_copy = phi_all_extended - phi_school_extended
+
+        # Compute phi_age_risk with social distance
+        phi_age_risk = (1 - social_distance) * phi_age_risk_copy
+
+        # Apply cocooning if needed
         if cocooning > 0:
-            # High risk cocooning and last age group cocooning
             phi_age_risk[:, 1, :, :] = (1 - cocooning) * phi_age_risk_copy[:, 1, :, :]
             phi_age_risk[-1, :, :, :] = (1 - cocooning) * phi_age_risk_copy[-1, :, :, :]
+
         # assert (phi_age_risk >= 0).all()
         return phi_age_risk
 
