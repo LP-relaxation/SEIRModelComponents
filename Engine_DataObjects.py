@@ -173,6 +173,7 @@ class TierInfo:
         with open(str(self.path_to_data / tier_filename), "r") as tier_input:
             tier_data = json.load(tier_input)
             self.tier = tier_data["tiers"]
+            self.min_required_days_in_tier = tier_data["min_required_days_in_tier"]
 
 
 class Vaccine:
@@ -557,12 +558,19 @@ class VariantPool:
         self.variants_data = variants_data
         self.variants_prev = variants_prev
         self.variant_names = variants_data["variant_names"]
+
         for (k, v) in self.variants_data["epi_params_under_variants"]["immune_evasion"].items():
             # calculate the rate of exponential immune evasion according to half-life (median) value:
             v["immune_evasion_max"] = log(2) / (v["half_life"] * 30) if v["half_life"] != 0 else 0
             v["start_date"] = pd.to_datetime(v["start_date"])
             v["peak_date"] = pd.to_datetime(v["peak_date"])
             v["end_date"] = pd.to_datetime(v["end_date"])
+
+        self.delta_start_datetime = self.variants_data["epi_params_under_variants"]["immune_evasion"]["delta"]["start_date"]
+        self.delta_end_datetime = self.variants_data["epi_params_under_variants"]["immune_evasion"]["delta"]["end_date"]
+
+        self.omicron_start_datetime = self.variants_data["epi_params_under_variants"]["immune_evasion"]["omicron"]["start_date"]
+        self.omicron_end_datetime = self.variants_data["epi_params_under_variants"]["immune_evasion"]["omicron"]["end_date"]
 
     def get_total_variant_prevalence(self, t_since_variant):
         return self.variants_prev.iloc[t_since_variant]["delta"] + self.variants_prev.iloc[t_since_variant]["omicron"]
@@ -613,7 +621,7 @@ class VariantPool:
 
         return vaccine_params_under_variants
 
-    def immune_evasion(self, immune_evasion_base: float, t):
+    def immune_evasion(self, immune_evasion_base: float, current_datetime):
         """
         I was planning to read the immune evasion value from the variant csv file, but we decide to run lsq on the
         immune evasion function, so I am integrating the piecewise linear function into the code.
@@ -632,18 +640,27 @@ class VariantPool:
         peak_date: the date the immune evasion reaches the maximum level.
 
         :param immune_evasion_base: base immune evasion rate before the variant.
-        :param t: current iterate
+        :param current_datetime
         :return: the immune evasion rate for a particular date.
         """
-        for (k, v) in self.variants_data["epi_params_under_variants"]["immune_evasion"].items():
-            if v["start_date"] <= t <= v["peak_date"]:
-                days = (v["peak_date"] - v["start_date"]).days
-                return (t - v["start_date"]).days * (
-                        v["immune_evasion_max"] - immune_evasion_base) / days + immune_evasion_base
-            elif v["peak_date"] <= t <= v["end_date"]:
-                days = (v["end_date"] - v["peak_date"]).days
-                return (v["end_date"] - t).days * (
-                        v["immune_evasion_max"] - immune_evasion_base) / days + immune_evasion_base
+
+        variants_data_dict = {}
+
+        if current_datetime >= self.delta_start_datetime and current_datetime <= self.omicron_start_datetime:
+            variants_data_dict = self.variants_data["epi_params_under_variants"]["immune_evasion"]["delta"]
+        elif current_datetime >= self.omicron_start_datetime:
+            variants_data_dict = self.variants_data["epi_params_under_variants"]["immune_evasion"]["omicron"]
+
+        if len(variants_data_dict) > 0:
+            start, peak, end = variants_data_dict["start_date"], variants_data_dict["peak_date"], variants_data_dict["end_date"]
+            immune_evasion_max = variants_data_dict["immune_evasion_max"]
+
+            if start <= current_datetime <= peak:
+                days = (peak - start).days
+                return (current_datetime - start).days * (immune_evasion_max - immune_evasion_base) / days + immune_evasion_base
+            elif peak <= current_datetime <= end:
+                days = (end - peak).days
+                return (end - current_datetime).days * (immune_evasion_max - immune_evasion_base) / days + immune_evasion_base
 
         return immune_evasion_base
 

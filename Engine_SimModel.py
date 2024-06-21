@@ -77,13 +77,13 @@ class SimReplication:
                              "ToIY",
                              "ToICUD",
                              "ToIYD",
-                             "ToRS",
-                             "ToSS",
+                             "ToNaturalImmunityS",
+                             "ToVaccineInducedImmunityS",
                              "S")
 
         # Keep track of the total number of immune evasion:
-        self.ToRS_immune = []  # waned natural immunity
-        self.ToSS_immune = []  # waned vaccine induced immunity
+        # self.ToRS_immune = []  # waned natural immunity
+        # self.ToVaccineInducedImmunityS_immune = []  # waned vaccine induced immunity
 
         for attribute in self.history_vars:
             setattr(self, f"{attribute}_history", [])
@@ -95,7 +95,7 @@ class SimReplication:
         # Tuples of variable names for organization purposes
         self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
         self.tracking_vars = ("IYIH", "IYICU", "IHICU", "ToICU", "ToIHT", "ToICUD",
-                              "ToIYD", "ToIA", "ToIY", "ToRS", "ToSS")
+                              "ToIYD", "ToIA", "ToIY", "ToNaturalImmunityS", "ToVaccineInducedImmunityS")
 
     def init_rng(self):
         """
@@ -297,7 +297,6 @@ class SimReplication:
             # Update attributes in self.state_vars + self.tracking_vars --
             #   their values are the sums of the same attributes
             #   across all vaccine groups
-
             for attribute in self.state_vars + self.tracking_vars:
                 sum_across_vaccine_groups = 0
                 for v_group in self.vaccine_groups:
@@ -374,14 +373,14 @@ class SimReplication:
                 self.instance.cal._day_type[t],
             )
         else:
-            self.policy(
+            current_tier = self.policy.get_current_tier(
                 t,
+                N,
                 self.ToIHT_history,
                 self.IH_history,
                 self.ToIY_history,
                 self.ICU_history,
-            )
-            current_tier = self.policy.tier_history[t]
+                self.instance.moving_avg_len)
             phi_t = epi.effective_phi(
                 self.policy.tiers[current_tier]["school_closure"],
                 self.policy.tiers[current_tier]["cocooning"],
@@ -424,7 +423,7 @@ class SimReplication:
         epi.update_icu_all(t, self.time_series_manager)
 
         step_size = self.step_size
-        get_binomial_transition_quantity = self.get_binomial_transition_quantity
+        binomial_transition = self.get_binomial_transition_quantity
 
         nu_ICU = epi.nu_ICU
         nu = epi.nu
@@ -488,8 +487,7 @@ class SimReplication:
                 #   interacts with all other groups a', r' (including
                 #   own group)
                 dSprob = np.sum(summand, axis=(2, 3))
-
-                dSprob_sum = dSprob_sum + dSprob
+                dSprob_sum += dSprob
 
             for v_group in self.vaccine_groups:
 
@@ -515,7 +513,7 @@ class SimReplication:
 
                 # self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
 
-                if v_group.v_name in {"second_dose"}:
+                if v_group.v_name == "second_dose":
                     # If there is immune evasion, there will be two outgoing arcs from S_vax.
                     # Infected people move to E compartment.
                     # People with waned immunity will go the S_waned compartment.
@@ -523,49 +521,49 @@ class SimReplication:
                     # _dSE: adjusted rate for entering E compartment.
                     # _dSR: adjusted rate for entering S_waned (self.vaccine_groups[3]._S) compartment.
 
-                    _dSE = get_binomial_transition_quantity(
-                        _S_t,
-                        (1 - v_group.v_beta_reduct) * dSprob_sum,
-                    )
-                    _dSR = get_binomial_transition_quantity(_S_t, rate_immune)
+                    _dSE = binomial_transition(_S_t, (1 - v_group.v_beta_reduct) * dSprob_sum)
+                    _dSR = binomial_transition(_S_t, rate_immune)
                     _dS = _dSR + _dSE
 
-                    E_out = get_binomial_transition_quantity(_E_t, rate_E)
+                    E_out = binomial_transition(_E_t, rate_E)
                     v_group._E[_t + 1] = _E_t + _dSE - E_out
 
                     self.vaccine_groups[3]._S[_t + 1] = (
                             self.vaccine_groups[3]._S[_t + 1] + _dSR
                     )
-                    v_group._ToSS[_t] = _dSR
+                    v_group._ToVaccineInducedImmunityS[_t] = _dSR
                 else:
-                    _dS = get_binomial_transition_quantity(
-                        _S_t, (1 - v_group.v_beta_reduct) * dSprob_sum
-                    )
+
+                    _dS = binomial_transition(_S_t, (1 - v_group.v_beta_reduct) * dSprob_sum)
+
                     # Dynamics for E
-                    E_out = get_binomial_transition_quantity(_E_t, rate_E)
+                    E_out = binomial_transition(_E_t, rate_E)
                     v_group._E[_t + 1] = _E_t + _dS - E_out
 
-                    v_group._ToSS[_t] = 0
+                    v_group._ToVaccineInducedImmunityS[_t] = 0
 
-                immune_escape_R = get_binomial_transition_quantity(_R_t, rate_immune)
-                self.vaccine_groups[3]._S[_t + 1] = self.vaccine_groups[3]._S[_t + 1] + immune_escape_R
-                v_group._ToRS[_t] = immune_escape_R
+                immune_escape_R = binomial_transition(_R_t, rate_immune)
+
+                self.vaccine_groups[3]._S[_t + 1] += immune_escape_R
+
+                v_group._ToNaturalImmunityS[_t] = immune_escape_R
+
                 v_group._S[_t + 1] += _S_t - _dS
 
                 # Dynamics for PY
-                EPY = get_binomial_transition_quantity(
+                EPY = binomial_transition(
                     E_out, epi.tau * (1 - v_group.v_tau_reduct)
                 )
-                PYIY = get_binomial_transition_quantity(_PY_t, rate_PYIY)
+                PYIY = binomial_transition(_PY_t, rate_PYIY)
                 v_group._PY[_t + 1] = _PY_t + EPY - PYIY
 
                 # Dynamics for PA
                 EPA = E_out - EPY
-                PAIA = get_binomial_transition_quantity(_PA_t, rate_PAIA)
+                PAIA = binomial_transition(_PA_t, rate_PAIA)
                 v_group._PA[_t + 1] = _PA_t + EPA - PAIA
 
                 # Dynamics for IA
-                IAR = get_binomial_transition_quantity(_IA_t, rate_IAR)
+                IAR = binomial_transition(_IA_t, rate_IAR)
                 v_group._IA[_t + 1] = _IA_t + PAIA - IAR
 
                 # Dynamics for IY
@@ -591,8 +589,8 @@ class SimReplication:
                     ),
                     step_size,
                 )
-                IYR = get_binomial_transition_quantity(_IY_t, rate_IYR)
-                IYD = get_binomial_transition_quantity(_IY_t - IYR, rate_IYD)
+                IYR = binomial_transition(_IY_t, rate_IYR)
+                IYD = binomial_transition(_IY_t - IYR, rate_IYD)
 
                 rate_IYH = discrete_approx(
                     np.array(
@@ -613,13 +611,13 @@ class SimReplication:
                     step_size,
                 )
 
-                v_group._IYIH[_t] = get_binomial_transition_quantity(
+                v_group._IYIH[_t] = binomial_transition(
                     _IY_t - IYR - IYD, rate_IYH
                 )
 
                 _IYIH_t = v_group._IYIH[_t]
 
-                v_group._IYICU[_t] = get_binomial_transition_quantity(
+                v_group._IYICU[_t] = binomial_transition(
                     _IY_t - IYR - IYD - _IYIH_t, rate_IYICU
                 )
 
@@ -635,8 +633,8 @@ class SimReplication:
                 )
 
                 # Dynamics for IH
-                IHR = get_binomial_transition_quantity(_IH_t, rate_IHR)
-                v_group._IHICU[_t] = get_binomial_transition_quantity(
+                IHR = binomial_transition(_IH_t, rate_IHR)
+                v_group._IHICU[_t] = binomial_transition(
                     _IH_t - IHR, rate_IHICU
                 )
 
@@ -647,8 +645,8 @@ class SimReplication:
                 )
 
                 # Dynamics for ICU
-                ICUR = get_binomial_transition_quantity(_ICU_t, rate_ICUR)
-                ICUD = get_binomial_transition_quantity(
+                ICUR = binomial_transition(_ICU_t, rate_ICUR)
+                ICUD = binomial_transition(
                     _ICU_t - ICUR, rate_ICUD
                 )
                 v_group._ICU[_t + 1] = (

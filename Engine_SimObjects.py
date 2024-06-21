@@ -17,14 +17,12 @@ def find_tier(thresholds, stat):
     :param stat: the critical statistics that would determine the next tier.
     :return: the new tier.
     """
-    counter = 0
     lb_threshold = 0
-    for lt in thresholds:
+    for i, lt in enumerate(thresholds):
         if stat >= lt:
-            lb_threshold = counter
-            counter += 1
-            if counter == len(thresholds):
-                break
+            lb_threshold = i
+        else:
+            break
 
     return lb_threshold
 
@@ -185,92 +183,73 @@ class MultiTierPolicy:
         lockdown_thresholds (list of list): a list with the thresholds for every
             tier. The list must have n-1 elements if there are n tiers. Each threshold
             is a list of values for evert time step of simulation.
-        community_transmission: (deprecated) CDC's old community transmission threshold for staging.
-                                Not in use anymore.
     """
 
-    def __init__(self, instance, tiers, lockdown_thresholds, community_transmission):
-        self._instance = instance
-        self.tiers = tiers.tier
+    def __init__(self, tiers, lockdown_thresholds):
 
-        self.community_transmission = community_transmission
+        self.tiers = tiers.tier
         self.lockdown_thresholds = lockdown_thresholds
-        self.tier_history = None
+
+        self.tier_history = []
+        self.days_since_tier_change = 0
+        self.min_required_days_in_tier = tiers.min_required_days_in_tier
+        self.days_spent_in_current_tier = 0
 
     def reset(self):
-        self.tier_history = None
+
+        self.tier_history = []
+        self.days_since_tier_change = 0
+        self.days_spent_in_current_tier = 0
 
     def __repr__(self):
         return str(self.lockdown_thresholds)
 
-    def __call__(self, t, ToIHT, IH, ToIY, ICU):
-        """
-        Function that makes an instance of a policy a callable.
-
-        """
-        N = self._instance.N
-
-        if self.tier_history is None:
-            self.tier_history = [None for i in range(t)]
-
-        if len(self.tier_history) > t:
-            return
+    def get_current_tier(self, t, N, ToIHT, IH, ToIY, ICU, moving_avg_len):
 
         ToIHT = np.array(ToIHT)
         ToIY = np.array(ToIY)
 
         # Compute daily admissions moving average
-        moving_avg_start = np.maximum(0, t - self._instance.moving_avg_len)
+        moving_avg_start = np.maximum(0, t - moving_avg_len)
 
         if len(ToIHT) > 0:
-            criStat_total = ToIHT.sum((1, 2))
-            criStat_avg = criStat_total[moving_avg_start:].mean()
+            critical_stat_avg = ToIHT.sum((1,2))[moving_avg_start:].mean()
         else:
-            criStat_avg = 0
+            critical_stat_avg = 0
 
         # Compute new cases per 100k:
         if len(ToIY) > 0:
-            ToIY_avg = (
-                    ToIY.sum((1, 2))[moving_avg_start:].sum()
-                    * 100000
-                    / np.sum(N, axis=(0, 1))
-            )
+            ToIY_avg = ToIY.sum((1, 2))[moving_avg_start:].sum() * 1e5 / np.sum(N)
         else:
             ToIY_avg = 0
-        # find new tier
-        new_tier = find_tier(self.lockdown_thresholds, criStat_avg)
 
-        # Check if community_transmission rate is included:
-        if self.community_transmission == "blue":
-            if new_tier == 0:
-                if ToIY_avg > 5:
-                    if ToIY_avg < 10:
-                        new_tier = 1
-                    else:
-                        new_tier = 2
-            elif new_tier == 1:
-                if ToIY_avg > 10:
+        # find new tier
+        new_tier = find_tier(self.lockdown_thresholds, critical_stat_avg)
+
+        # This code corresponds to the deprecated community_transmission attribute
+        #   when it was set to "green" (default)
+        # This was added after input from public health officials
+        #   to stop certain "drop-offs" in active tiers.
+        if new_tier == 0:
+            if ToIY_avg > 5:
+                if ToIY_avg < 10:
+                    new_tier = 1
+                else:
                     new_tier = 2
-        elif self.community_transmission == "green":
-            if new_tier == 0:
-                if ToIY_avg > 5:
-                    if ToIY_avg < 10:
-                        new_tier = 1
-                    else:
-                        new_tier = 2
 
         if len(self.tier_history) > 0:
-            current_tier = self.tier_history[t - 1]
+            previous_tier = self.tier_history[-1]
         else:
-            current_tier = new_tier
+            previous_tier = None
 
-        if current_tier != new_tier:  # bump to the next tier
-            t_end = t + self.tiers[new_tier]["min_enforcing_time"]
-        else:  # stay in same tier for one more time period
-            new_tier = current_tier
-            t_end = t + 1
+        if previous_tier == None or (new_tier != previous_tier and self.days_since_tier_change >= self.min_required_days_in_tier):
+            self.tier_history.append(new_tier)
+            self.days_since_tier_change = 0
+        else:
+            self.tier_history.append(previous_tier)
+            self.days_since_tier_change += 1
 
-        self.tier_history += [new_tier for i in range(t_end - t)]
+        return self.tier_history[-1]
 
 
 class VaccineGroup:
@@ -321,8 +300,8 @@ class VaccineGroup:
             "ToIYD",
             "ToIA",
             "ToIY",
-            "ToRS",
-            "ToSS",
+            "ToNaturalImmunityS",
+            "ToVaccineInducedImmunityS",
             "ToR"
         )
 

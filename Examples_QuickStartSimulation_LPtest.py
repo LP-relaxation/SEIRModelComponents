@@ -126,7 +126,7 @@ thresholds = (-1, 100, 200, 500, 1000)
 # Prof Morton mentioned that setting community_transmission to "green"
 #   was a government official request to stop certain "drop-offs"
 #   in active tiers.
-mtp = MultiTierPolicy(austin, tiers, thresholds, "green")
+mtp = MultiTierPolicy(tiers, thresholds)
 
 # Create an instance of SimReplication with seed 500.
 rep = SimReplication(austin,
@@ -153,6 +153,6 @@ print(np.sum(rep.ICU_history))
 
 print(time.time() - start_time)
 
-print(process.memory_info().rss)
+# print(process.memory_info().rss)
 
 breakpoint()
