@@ -75,8 +75,8 @@ class SimReplication:
                              "R",
                              "ToIHT",
                              "ToIY",
-                             "ToICUD",
-                             "ToIYD",
+                             "ICU_to_D",
+                             "IY_to_D",
                              "ToNaturalImmunityS",
                              "ToVaccineInducedImmunityS",
                              "S")
@@ -94,8 +94,8 @@ class SimReplication:
 
         # Tuples of variable names for organization purposes
         self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
-        self.tracking_vars = ("IYIH", "IYICU", "IHICU", "ToICU", "ToIHT", "ToICUD",
-                              "ToIYD", "ToIA", "ToIY", "ToNaturalImmunityS", "ToVaccineInducedImmunityS")
+        self.tracking_vars = ("IY_to_IH", "IY_to_ICU", "IH_to_ICU", "ToICU", "ToIHT", "ICU_to_D",
+                              "IY_to_D", "ToIA", "ToIY", "ToNaturalImmunityS", "ToVaccineInducedImmunityS")
 
     def init_rng(self):
         """
@@ -298,7 +298,7 @@ class SimReplication:
             #   their values are the sums of the same attributes
             #   across all vaccine groups
             for attribute in self.state_vars + self.tracking_vars:
-                sum_across_vaccine_groups = 0
+                sum_across_vaccine_groups = np.zeros((A,L))
                 for v_group in self.vaccine_groups:
 
                     # Note: add this to tests! But take this out of code
@@ -315,6 +315,10 @@ class SimReplication:
                     #     f"{self.instance.cal.calendar[t]}, {t}"
 
                 setattr(self, attribute, sum_across_vaccine_groups)
+
+            for v_group in self.vaccine_groups:
+                for attribute in v_group.tracking_vars:
+                    setattr(v_group, attribute, np.zeros((A,L)))
 
             # We are interested in the history, not just current values, of
             #   certain variables -- save these current values
@@ -411,12 +415,12 @@ class SimReplication:
         else:
             immune_evasion = 0
 
-        # Updates pIH, HICUR, etaICU based on timeseries specified in
+        # Updates pIH, HICU_to_R, etaICU based on timeseries specified in
         #   otherInfo (additional columns in transmission.csv file)
         # From group discussion, we will first create version of code
         #   assuming all time series are specified
         # Afterwards, we will add optionality -- provide a backup option
-        #   for values of pIH, HICUR, etaICU if user does not specify
+        #   for values of pIH, HICU_to_R, etaICU if user does not specify
         #   timeseries for one or more of these parameters
         #   (this was the previous functionality of rd_rate, etc...
         #   but this has been removed from the setup .json file)
@@ -429,13 +433,13 @@ class SimReplication:
         nu = epi.nu
 
         rate_E = discrete_approx(epi.sigma_E, step_size)
-        rate_IAR = np.full((A, L), discrete_approx(epi.gamma_IA, step_size))
-        rate_PAIA = np.full((A, L), discrete_approx(epi.rho_A, step_size))
-        rate_PYIY = np.full((A, L), discrete_approx(epi.rho_Y, step_size))
-        rate_IHICU = discrete_approx(nu * epi.etaICU, step_size)
-        rate_IHR = discrete_approx((1 - nu) * epi.gamma_IH, step_size)
-        rate_ICUD = discrete_approx(nu_ICU * epi.mu_ICU, step_size)
-        rate_ICUR = discrete_approx((1 - nu_ICU) * epi.gamma_ICU, step_size)
+        rate_IA_to_R = np.full((A, L), discrete_approx(epi.gamma_IA, step_size))
+        rate_PA_to_IA = np.full((A, L), discrete_approx(epi.rho_A, step_size))
+        rate_PY_to_IY = np.full((A, L), discrete_approx(epi.rho_Y, step_size))
+        rate_IH_to_ICU = discrete_approx(nu * epi.etaICU, step_size)
+        rate_IH_to_R = discrete_approx((1 - nu) * epi.gamma_IH, step_size)
+        rate_ICU_to_D = discrete_approx(nu_ICU * epi.mu_ICU, step_size)
+        rate_ICU_to_R = discrete_approx((1 - nu_ICU) * epi.gamma_ICU, step_size)
         rate_immune = discrete_approx(immune_evasion, step_size)
 
         for _t in range(step_size):
@@ -463,10 +467,10 @@ class SimReplication:
                 # Coefficients are correct -- epi.omega_PY = epi.omega_IY * epi.omega_P
                 #   and epi.omega_IA = epi.omega_IA * epi.omega_P (see DataObjects)
                 weighted_sum_infectious_groups = (
-                        np.matmul(np.diag(epi.omega_PY), v_group._PY[_t, :, :])
-                        + np.matmul(np.diag(epi.omega_PA), v_group._PA[_t, :, :])
-                        + epi.omega_IA * v_group._IA[_t, :, :]
-                        + epi.omega_IY * v_group._IY[_t, :, :]
+                        np.matmul(np.diag(epi.omega_PY), v_group.PY)
+                        + np.matmul(np.diag(epi.omega_PA), v_group.PA)
+                        + epi.omega_IA * v_group.IA
+                        + epi.omega_IY * v_group.IY
                 )
 
                 # 5x1 array of total number in each age group
@@ -500,20 +504,26 @@ class SimReplication:
                 #   defined after they are updated in the code
                 # Not all variables in v_group.tracking_vars have
                 #   shortcuts because many are only used once or twice
-                _S_t = v_group._S[_t]
-                _E_t = v_group._E[_t]
-                _IA_t = v_group._IA[_t]
-                _IY_t = v_group._IY[_t]
-                _PA_t = v_group._PA[_t]
-                _PY_t = v_group._PY[_t]
-                _R_t = v_group._R[_t]
-                _D_t = v_group._D[_t]
-                _IH_t = v_group._IH[_t]
-                _ICU_t = v_group._ICU[_t]
+                S = v_group.S
+                E = v_group.E
+                IA = v_group.IA
+                IY = v_group.IY
+                PA = v_group.PA
+                PY = v_group.PY
+                R = v_group.R
+                D = v_group.D
+                IH = v_group.IH
+                ICU = v_group.ICU
+
+                rate_IYH = discrete_approx(np.array(epi.pi * (1 - v_group.v_pi_reduct) * epi.pIH) * np.expand_dims(epi.Eta, axis=1), step_size)
+                rate_IY_to_ICU = discrete_approx(np.array(epi.pi * (1 - v_group.v_pi_reduct) * (1-epi.pIH)) * np.expand_dims(epi.Eta, axis=1), step_size)
+
+                rate_IY_to_R = discrete_approx(np.array((1 - epi.pi * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * (1 - epi.alpha_IY_to_D)), step_size)
+                rate_IY_to_D = discrete_approx(np.array((1 - epi.pi * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * epi.alpha_IY_to_D), step_size)
 
                 # self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
 
-                _dSE = binomial_transition(_S_t, (1 - v_group.v_beta_reduct) * dSprob_sum)
+                _dSE = binomial_transition(S, (1 - v_group.v_beta_reduct) * dSprob_sum)
 
                 # If there is immune evasion, there will be two outgoing arcs from S_vax.
                 # Infected people move to E compartment.
@@ -522,100 +532,61 @@ class SimReplication:
                 # _dSE: adjusted rate for entering E compartment.
                 # _dSWaned: adjusted rate for entering S_waned (self.vaccine_groups[3]._S) compartment.
                 if v_group.v_name == "second_dose":
-                    _dSWaned = binomial_transition(_S_t, rate_immune)
+                    _dSWaned = binomial_transition(S, rate_immune)
                 else:
                     _dSWaned = 0
 
                 _dS = _dSWaned + _dSE
 
-                E_out = binomial_transition(_E_t, rate_E)
-                v_group._E[_t + 1] = _E_t + _dSE - E_out
+                E_out = binomial_transition(E, rate_E)
+                immune_escape_R = binomial_transition(R, rate_immune)
+                E_to_PY = binomial_transition(E_out, epi.tau * (1 - v_group.v_tau_reduct))
+                PY_to_IY = binomial_transition(PY, rate_PY_to_IY)
+                PA_to_IA = binomial_transition(PA, rate_PA_to_IA)
+                IA_to_R = binomial_transition(IA, rate_IA_to_R)
+                IY_to_R = binomial_transition(IY, rate_IY_to_R)
+                IY_to_D = binomial_transition(IY - IY_to_R, rate_IY_to_D)
+                IY_to_IH = binomial_transition(IY - IY_to_R - IY_to_D, rate_IYH)
+                IY_to_ICU = binomial_transition(IY - IY_to_R - IY_to_D - IY_to_IH, rate_IY_to_ICU)
+                IH_to_R = binomial_transition(IH, rate_IH_to_R)
+                IH_to_ICU = binomial_transition(IH - IH_to_R, rate_IH_to_ICU)
+                ICU_to_R = binomial_transition(ICU, rate_ICU_to_R)
+                ICU_to_D = binomial_transition(ICU - ICU_to_R, rate_ICU_to_D)
 
-                self.vaccine_groups[3]._S[_t + 1] += _dSWaned
-                v_group._ToVaccineInducedImmunityS[_t] = _dSWaned
+                v_group.E += _dSE - E_out
 
-                immune_escape_R = binomial_transition(_R_t, rate_immune)
+                self.vaccine_groups[3].S += _dSWaned
+                v_group.ToVaccineInducedImmunityS = _dSWaned
 
-                self.vaccine_groups[3]._S[_t + 1] += immune_escape_R
+                self.vaccine_groups[3].S += immune_escape_R
 
-                v_group._ToNaturalImmunityS[_t] = immune_escape_R
+                v_group.S -= _dS
 
-                v_group._S[_t + 1] += _S_t - _dS
+                v_group.PY += E_to_PY - PY_to_IY
 
-                # Dynamics for PY
-                EPY = binomial_transition(E_out, epi.tau * (1 - v_group.v_tau_reduct))
-                PYIY = binomial_transition(_PY_t, rate_PYIY)
-                v_group._PY[_t + 1] = _PY_t + EPY - PYIY
+                v_group.PA += E_out - E_to_PY - PA_to_IA
 
-                # Dynamics for PA
-                EPA = E_out - EPY
-                PAIA = binomial_transition(_PA_t, rate_PAIA)
-                v_group._PA[_t + 1] = _PA_t + EPA - PAIA
+                v_group.IA += PA_to_IA - IA_to_R
 
-                # Dynamics for IA
-                IAR = binomial_transition(_IA_t, rate_IAR)
-                v_group._IA[_t + 1] = _IA_t + PAIA - IAR
+                v_group.IY += PY_to_IY - IY_to_R - IY_to_D - IY_to_IH - IY_to_ICU
+                v_group.IH += IY_to_IH - IH_to_R - IH_to_ICU
+                v_group.ICU += IH_to_ICU - ICU_to_D - ICU_to_R + IY_to_ICU
+                v_group.R += IH_to_R + IY_to_R + IA_to_R + ICU_to_R - immune_escape_R
+                v_group.D += ICU_to_D + IY_to_D
 
-                # Dynamics for IY
-                rate_IYR = discrete_approx(np.array((1 - epi.pi * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * (1 - epi.alpha_IYD)), step_size)
-                rate_IYD = discrete_approx(np.array((1 - epi.pi * (1 - v_group.v_pi_reduct)) * epi.gamma_IY * epi.alpha_IYD), step_size)
-
-                IYR = binomial_transition(_IY_t, rate_IYR)
-                IYD = binomial_transition(_IY_t - IYR, rate_IYD)
-
-                rate_IYH = discrete_approx(np.array(epi.pi * (1 - v_group.v_pi_reduct) * epi.pIH) * np.expand_dims(epi.Eta, axis=1), step_size)
-                rate_IYICU = discrete_approx(np.array(epi.pi * (1 - v_group.v_pi_reduct) * (1-epi.pIH)) * np.expand_dims(epi.Eta, axis=1), step_size)
-
-                v_group._IYIH[_t] = binomial_transition(_IY_t - IYR - IYD, rate_IYH)
-                _IYIH_t = v_group._IYIH[_t]
-
-                v_group._IYICU[_t] = binomial_transition(_IY_t - IYR - IYD - _IYIH_t, rate_IYICU)
-                _IYICU_t = v_group._IYICU[_t]
-
-                v_group._IY[_t + 1] = (_IY_t + PYIY - IYR - IYD - _IYIH_t - _IYICU_t)
-
-                # Dynamics for IH
-                IHR = binomial_transition(_IH_t, rate_IHR)
-                v_group._IHICU[_t] = binomial_transition(_IH_t - IHR, rate_IHICU)
-
-                _IHICU_t = v_group._IHICU[_t]
-
-                v_group._IH[_t + 1] = (_IH_t + _IYIH_t - IHR - _IHICU_t)
-
-                # Dynamics for ICU
-                ICUR = binomial_transition(_ICU_t, rate_ICUR)
-                ICUD = binomial_transition(_ICU_t - ICUR, rate_ICUD)
-                v_group._ICU[_t + 1] = (_ICU_t + _IHICU_t - ICUD - ICUR + _IYICU_t)
-                v_group._ToICU[_t] = _IYICU_t + _IHICU_t
-                v_group._ToIHT[_t] = _IYICU_t + _IYIH_t
-
-                # Dynamics for R
-                v_group._R[_t + 1] = (_R_t + IHR + IYR + IAR + ICUR - immune_escape_R)
-
-                # Dynamics for D
-                v_group._D[_t + 1] = _D_t + ICUD + IYD
-                v_group._ToICUD[_t] = ICUD
-                v_group._ToIYD[_t] = IYD
-                v_group._ToIA[_t] = PAIA
-                v_group._ToIY[_t] = PYIY
-
-        for v_group in self.vaccine_groups:
-            for attribute in self.state_vars:
-                setattr(v_group, attribute, getattr(v_group, "_" + attribute)[step_size].copy())
-
-            for attribute in self.tracking_vars:
-                setattr(v_group, attribute, getattr(v_group, "_" + attribute).sum(axis=0))
+                v_group.ToNaturalImmunityS += immune_escape_R
+                v_group.IY_to_IH += IY_to_IH
+                v_group.IY_to_ICU += IY_to_ICU
+                v_group.IH_to_ICU += IH_to_ICU
+                v_group.ToICU += IY_to_ICU + IH_to_ICU
+                v_group.ToIHT += IY_to_ICU + IY_to_IH
+                v_group.ICU_to_D += ICU_to_D
+                v_group.IY_to_D += IY_to_D
+                v_group.ToIA += PA_to_IA
+                v_group.ToIY += PY_to_IY
 
         if t >= self.vaccine.vaccine_start_time:
             self.vaccine_schedule(t, rate_immune)
-
-        for v_group in self.vaccine_groups:
-            for attribute in self.state_vars:
-                setattr(v_group, "_" + attribute, np.zeros((step_size + 1, A, L)))
-                vars(v_group)["_" + attribute][0] = vars(v_group)[attribute]
-
-            for attribute in self.tracking_vars:
-                setattr(v_group, "_" + attribute, np.zeros((step_size, A, L)))
 
     def vaccine_schedule(self, t, rate_immune):
         """

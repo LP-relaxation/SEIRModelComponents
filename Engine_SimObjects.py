@@ -291,13 +291,13 @@ class VaccineGroup:
 
         self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
         self.tracking_vars = (
-            "IYIH",
-            "IYICU",
-            "IHICU",
+            "IY_to_IH",
+            "IY_to_ICU",
+            "IH_to_ICU",
             "ToICU",
             "ToIHT",
-            "ToICUD",
-            "ToIYD",
+            "ICU_to_D",
+            "IY_to_D",
             "ToIA",
             "ToIY",
             "ToNaturalImmunityS",
@@ -307,20 +307,15 @@ class VaccineGroup:
 
         for attribute in self.state_vars:
             setattr(self, attribute, np.zeros((A, L)))
-            setattr(self, "_" + attribute, np.zeros((step_size + 1, A, L)))
 
         for attribute in self.tracking_vars:
             setattr(self, attribute, np.zeros((A, L)))
-            setattr(self, "_" + attribute, np.zeros((step_size, A, L)))
 
         if self.v_name == "unvax":
             # Initial Conditions (assumed)
             self.PY = self.I0
-            self.R = 0
+            self.R = np.zeros((A,L))
             self.S = self.N - self.PY - self.IY
-
-        for attribute in self.state_vars:
-            vars(self)["_" + attribute][0] = getattr(self, attribute)
 
     def variant_update(self, params, prev):
         """

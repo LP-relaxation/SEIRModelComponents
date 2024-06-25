@@ -389,7 +389,7 @@ class EpiParams:
         self.alpha_gamma_ICU0 = self.alpha_gamma_ICU
         self.alpha_IH0 = self.alpha_IH
         self.alpha_mu_ICU0 = self.alpha_mu_ICU
-        self.alpha_IYD0 = self.alpha_IYD
+        self.alpha_IY_to_D0 = self.alpha_IY_to_D
         self.sigma_E0 = copy.deepcopy(self.sigma_E)
 
     @property
