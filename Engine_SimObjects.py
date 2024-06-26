@@ -204,7 +204,7 @@ class MultiTierPolicy:
     def __repr__(self):
         return str(self.lockdown_thresholds)
 
-    def get_current_tier(self, t, N, ToIHT, IH, ToIY, ICU, moving_avg_len):
+    def get_current_tier(self, t, N, ToIHT, ToIY, moving_avg_len):
 
         ToIHT = np.array(ToIHT)
         ToIY = np.array(ToIY)
@@ -294,28 +294,31 @@ class VaccineGroup:
             "IY_to_IH",
             "IY_to_ICU",
             "IH_to_ICU",
-            "ToICU",
-            "ToIHT",
+            "flow_to_ICU",
+            "flow_to_IH",
             "ICU_to_D",
             "IY_to_D",
-            "ToIA",
-            "ToIY",
-            "ToNaturalImmunityS",
-            "ToVaccineInducedImmunityS",
-            "ToR"
-        )
+            "flow_to_IA",
+            "flow_to_IY",
+            "flow_to_natural_immunity_S",
+            "flow_to_vaccine_induced_immunity_S")
 
         for attribute in self.state_vars:
             setattr(self, attribute, np.zeros((A, L)))
+            setattr(self, "_" + attribute, np.zeros((step_size + 1, A, L)))
 
         for attribute in self.tracking_vars:
             setattr(self, attribute, np.zeros((A, L)))
+            setattr(self, "_" + attribute, np.zeros((step_size, A, L)))
 
         if self.v_name == "unvax":
             # Initial Conditions (assumed)
             self.PY = self.I0
-            self.R = np.zeros((A,L))
+            self.R = 0
             self.S = self.N - self.PY - self.IY
+
+        for attribute in self.state_vars:
+            vars(self)["_" + attribute][0] = getattr(self, attribute)
 
     def variant_update(self, params, prev):
         """
