@@ -1,7 +1,5 @@
 ###############################################################################
 
-import matplotlib.pyplot as plt
-
 # Examples_QuickStartSimulation.py
 # This document contains examples of how to use the simulation code.
 
@@ -22,41 +20,25 @@ import matplotlib.pyplot as plt
 #   import sys
 #   sys.path.append(<NAME_OF_YOUR_DIRECTORY>)
 
-# Linda Pei 2023
-
 ###############################################################################
 
 # Import other code modules
 # SimObjects contains classes of objects that change within a simulation
 #   replication.
-# DataObjects contains classes of objects that do not change
-#   within simulation replications and also do not change *across*
+# DataObjects (generally) contains classes of objects that do not change
+#   within simulation replications and also do not change across
 #   simulation replications -- they contain data that are "fixed"
-#   for an overall problem.
-# SimModel contains the class SimReplication, which runs
+#   for an overall problem. (Note: EpiParams is an exception -- it is
+#   kind of a hybrid.)
+# SimModel contains the class SimModel, which runs
 #   a simulation replication and stores the simulation data
-#   in its object attributes.
-# InputOutputTools contains utility functions that act on
-#   instances of SimReplication to load and export
-#   simulation states and data.
-# Tools_Optimization contains utility functions for optimization purposes.
+#   in its object attributes..
 
-import copy
-from Engine_SimObjects import MultiTierPolicy, CDCTierPolicy
-from Engine_DataObjects import DataPrepConfig, TimeSeriesManager, Calendar, City, TierInfo, Vaccine
-from Engine_SimModel import SimReplication
-import Tools_InputOutput
-import Tools_Optimization_Utilities
+from Engine_SimObjects import MultiTierPolicy
+from Engine_DataObjects import DataPrepConfig, TierInfo
+from Engine_SimModel import SimModelConstructor
 
-# Import other Python packages
 import numpy as np
-import pandas as pd
-
-import psutil
-
-from pathlib import Path
-
-import datetime as dt
 import json
 
 ###############################################################################
@@ -65,94 +47,28 @@ import time
 
 start_time = time.time()
 
-process = psutil.Process()
+DataPrepConfig.base_path = DataPrepConfig.base_path / "austin_data"
 
-transmission_df = pd.read_csv(DataPrepConfig.base_path / "instances" / "austin" / "transmission.csv")
-setup_data = json.load(open(DataPrepConfig.base_path / "instances" / "austin" / "austin_setup.json"))
+austin_dict_filenames = json.load(open(DataPrepConfig.base_path / "filenames.json"))
 
-austin_calendar = Calendar("austin",
-                           "calendar.csv",
-                           "02/28/20",
-                           945)
+sim_model_constructor = SimModelConstructor("austin",
+                                            "02/28/20",
+                                            945,
+                                            austin_dict_filenames)
+austin_model = sim_model_constructor.create_sim_model()
 
-time_series_manager = TimeSeriesManager()
-time_series_manager.create_fixed_time_series_from_monthdayyear_df("date",
-                                                                  transmission_df,
-                                                                  austin_calendar.simulation_datetimes)
-time_series_manager.create_fixed_time_series_from_monthdayyear_intervals("school_closure",
-                                                                         setup_data["school_closure"],
-                                                                         austin_calendar.simulation_datetimes)
+tiers = TierInfo(austin_dict_filenames["tier_info_json"])
 
-austin = City("austin",
-              austin_calendar,
-              "austin_setup.json",
-              "variant.json",
-              "austin_hospital_home_timeseries.csv",
-              "variant_prevalence.csv")
-
-tiers = TierInfo("austin", "tiers4.json")
-
-vaccines = Vaccine(austin,
-                   "austin",
-                   "vaccines.json",
-                   "booster_allocation_fixed.csv",
-                   "vaccine_allocation_fixed.csv")
-
-###############################################################################
-
-# The following examples build on each other, so it is
-#   recommended to study them in order.
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# Example A: Simulating a threshold policy
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# In general, simulating a policy requires the steps
-# (1) Create a MultiTierPolicy instance with desired thresholds.
-# (2) Create a SimReplication instance with  aforementioned policy
-#   and a random number seed -- this seed dictates the randomly sampled
-#   epidemiological parameters for that replication as well as the
-#   binomial random variable transitions between compartments in the
-#   SEIR-type model.
-# (3) Advance simulation time.
-
-# Specify the 5 thresholds for a 5-tier policy
 thresholds = (-1, 100, 200, 500, 1000)
-
-# Create an instance of MultiTierPolicy using
-#   austin, tiers (defined above)
-#   thresholds (defined above)
-#   "green" as the community_transmission toggle
-# Prof Morton mentioned that setting community_transmission to "green"
-#   was a government official request to stop certain "drop-offs"
-#   in active tiers.
 mtp = MultiTierPolicy(tiers, thresholds)
 
-# Create an instance of SimReplication with seed 500.
-rep = SimReplication(austin,
-                     time_series_manager,
-                     setup_data["epi_params"],
-                     vaccines,
-                     mtp,
-                     100)
+austin_model.policy = mtp
 
-# Note that specifying a seed of -1 creates a simulation replication
-#   with average values for the "random" epidemiological parameter
-#   values and deterministic binomial transitions
-#   (also taking average values).
+austin_model.simulate_time_period(945)
 
-# Advance simulation time until a desired end day.
-# Currently, any non-negative integer between 0 and 963 (the length
-#   of the user-specified "calendar.csv") works.
-# Attributes in the SimReplication instance are updated in-place
-#   to reflect the most current simulation state.
-rep.simulate_time_period(945)
-
-print(rep.compute_rsq())
-print(np.sum(rep.ICU_history))
+print(austin_model.compute_rsq())
+print(np.sum(austin_model.ICU_history))
 
 print(time.time() - start_time)
-
-# print(process.memory_info().rss)
 
 breakpoint()

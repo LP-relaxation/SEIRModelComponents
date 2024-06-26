@@ -10,7 +10,6 @@ from math import log
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from itertools import product
 
 import copy
 
@@ -60,17 +59,16 @@ class TimeSeriesManager:
 
 class Calendar:
     def __init__(self,
-                 city_name,
                  calendar_filename,
                  start_date,
-                 sim_length):
-        date_and_day_type_df = pd.read_csv(DataPrepConfig.base_path / "instances" / f"{city_name}" / calendar_filename)
+                 max_simulation_length):
+        date_and_day_type_df = pd.read_csv(DataPrepConfig.base_path / calendar_filename)
         date_and_day_type_df["Date"] = pd.to_datetime(date_and_day_type_df["Date"],
                                                       format=DataPrepConfig.date_format)
 
         self.date_and_day_type_df = date_and_day_type_df
         self.start = dt.datetime.strptime(start_date, DataPrepConfig.date_format)
-        self.simulation_datetimes = [self.start + dt.timedelta(days=t) for t in range(sim_length)]
+        self.simulation_datetimes = [self.start + dt.timedelta(days=t) for t in range(max_simulation_length)]
         self.dict_datetime_to_sim_time = {d: d_ix for (d_ix, d) in enumerate(self.simulation_datetimes)}
         self._day_type = np.asarray(
             self.date_and_day_type_df["DayType"][self.date_and_day_type_df["Date"] >= self.start])
@@ -88,7 +86,7 @@ class City:
     ):
         self.city_name = city_name
         self.cal = calendar_instance
-        self.path_to_data = DataPrepConfig.base_path / "instances" / f"{city_name}"
+        self.path_to_data = DataPrepConfig.base_path
 
         self.load_setup_data(setup_filename)
         self.load_hosp_related_data(hospital_home_timeseries_filename)
@@ -168,9 +166,8 @@ class City:
 
 
 class TierInfo:
-    def __init__(self, city_name, tier_filename):
-        self.path_to_data = DataPrepConfig.base_path / "instances" / f"{city_name}"
-        with open(str(self.path_to_data / tier_filename), "r") as tier_input:
+    def __init__(self, tier_filename):
+        with open(str(DataPrepConfig.base_path / tier_filename), "r") as tier_input:
             tier_data = json.load(tier_input)
             self.tier = tier_data["tiers"]
             self.min_required_days_in_tier = tier_data["min_required_days_in_tier"]
@@ -184,12 +181,11 @@ class Vaccine:
     def __init__(
             self,
             instance,
-            city_name,
             vaccine_filename,
             booster_filename,
             vaccine_allocation_filename):
 
-        self.path_to_data = DataPrepConfig.base_path / "instances" / f"{city_name}"
+        self.path_to_data = DataPrepConfig.base_path
 
         with open(str(self.path_to_data / vaccine_filename), "r") as vaccine_input:
             vaccine_data = json.load(vaccine_input)
@@ -588,6 +584,8 @@ class VariantPool:
 
     def immune_evasion(self, immune_evasion_base: float, current_datetime):
         """
+        Nazli's notes below:
+
         I was planning to read the immune evasion value from the variant csv file, but we decide to run lsq on the
         immune evasion function, so I am integrating the piecewise linear function into the code.
 

@@ -1,0 +1,19 @@
+{
+"beta_reduct": {
+  "first_dose": 0.8,
+  "second_dose": 0.9,
+  "waned": 0.7
+},
+"tau_reduct":{
+  "first_dose": 0.95,
+  "second_dose": 0.95,
+  "waned": 0.95
+},
+"pi_reduct":{
+  "first_dose": 0.95,
+  "second_dose": 0.95,
+  "waned": 0.95
+},
+"second_dose_time": 21,
+"effect_time": 14
+}

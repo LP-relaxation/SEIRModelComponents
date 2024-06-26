@@ -1,21 +1,65 @@
 ###############################################################################
 
 # Engine_SimModel.py
-# This module contains the SimReplication class. Each instance holds
+# This module contains the SimModel class. Each instance holds
 #   a City instance, an EpiParams instance, a Vaccine instance,
 #   VaccineGroup instance(s), and optionally a MultiTierPolicy instance.
 
 ###############################################################################
 
 import numpy as np
-from Engine_DataObjects import EpiParams
+import pandas as pd
+import json
+from Engine_DataObjects import EpiParams, DataPrepConfig, TimeSeriesManager, Calendar, City, Vaccine
 from Engine_SimObjects import VaccineGroup
-import copy
 
 ###############################################################################
 
 
-class SimReplication:
+class SimModelConstructor:
+
+    def __init__(self,
+                 city_name,
+                 simulation_start_date_str,
+                 max_simulation_length,
+                 dict_filenames,
+                 seed=100):
+
+        self.transmission_df = pd.read_csv(DataPrepConfig.base_path / dict_filenames["historical_transmission_timeseries_csv"])
+        self.setup_data = json.load(open(DataPrepConfig.base_path / dict_filenames["setup_json"]))
+        self.calendar = Calendar(dict_filenames["calendar_csv"], simulation_start_date_str, max_simulation_length)
+
+        self.time_series_manager = TimeSeriesManager()
+        self.time_series_manager.create_fixed_time_series_from_monthdayyear_df("date",
+                                                                               self.transmission_df,
+                                                                               self.calendar.simulation_datetimes)
+        self.time_series_manager.create_fixed_time_series_from_monthdayyear_intervals("school_closure",
+                                                                                      self.setup_data["school_closure"],
+                                                                                      self.calendar.simulation_datetimes)
+
+        self.city = City(city_name,
+                         self.calendar,
+                         dict_filenames["setup_json"],
+                         dict_filenames["variant_json"],
+                         dict_filenames["historical_hospital_timeseries_csv"],
+                         dict_filenames["variant_prevalence_csv"])
+
+        self.vaccines = Vaccine(self.city,
+                                dict_filenames["vaccine_info_json"],
+                                dict_filenames["booster_allocation_csv"],
+                                dict_filenames["vaccine_allocation_csv"])
+
+        self.seed = seed
+
+    def create_sim_model(self):
+        return SimModel(self.city,
+                        self.time_series_manager,
+                        self.setup_data["epi_params"],
+                        self.vaccines,
+                        None,
+                        self.seed)
+
+class SimModel:
     def __init__(self,
                  instance,
                  time_series_manager,
@@ -33,7 +77,6 @@ class SimReplication:
             non-negative integer, -1, or None
         """
 
-        # Save arguments as attributes
         self.instance = instance
         self.time_series_manager = time_series_manager
         self.vaccine = vaccine
@@ -91,7 +134,8 @@ class SimReplication:
         # Tuples of variable names for organization purposes
         self.state_vars = ("S", "E", "IA", "IY", "PA", "PY", "R", "D", "IH", "ICU")
         self.tracking_vars = ("IY_to_IH", "IY_to_ICU", "IH_to_ICU", "flow_to_ICU", "flow_to_IH", "ICU_to_D",
-                              "IY_to_D", "flow_to_IA", "flow_to_IY", "flow_to_natural_immunity_S", "flow_to_vaccine_induced_immunity_S")
+                              "IY_to_D", "flow_to_IA", "flow_to_IY",
+                              "flow_to_natural_immunity_S", "flow_to_vaccine_induced_immunity_S")
 
     def init_rng(self):
         """

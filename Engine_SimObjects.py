@@ -7,8 +7,6 @@
 import numpy as np
 
 ###############################################################################
-# Common simple functions:
-
 
 def find_tier(thresholds, stat):
     """
@@ -25,147 +23,6 @@ def find_tier(thresholds, stat):
             break
 
     return lb_threshold
-
-
-###############################################################################
-# Modules:
-
-class CDCTierPolicy:
-    """
-    CDC's community levels.
-    CDC system includes three tiers. Green and orange stages are deprecated but maintained
-    for code consistency with our system.
-    CDC system includes three indicators;
-        1. Case counts (new COVID-19 Cases Per 100,000 people in the past 7 days.),
-        2. Hospital admissions (new COVID-19 admissions per 100,000 population (7-day total)),
-        3. Percent hospital beds (percent of staffed inpatient beds occupied by COVID-19 patients (7-day average)).
-
-        Depending on the case counts thresholds, the hospital admissions and percent hospital beds thresholds
-    changes. I think of this as follows, when there is a surge of cases the other two thresholds are stricter
-    but when there is no surge of cases the other two thresholds are more relax.
-        The history for the case counts is written as self.surge_history to indicate which set of thresholds are active
-    for hospital admissions and percent hospital beds.
-        The new tier will be stricter of what hospital admission and percent hospital beds thresholds are indicating.
-    """
-
-    def __init__(self, instance,
-                 tiers,
-                 case_threshold,
-                 hosp_adm_thresholds,
-                 staffed_bed_thresholds,
-                 specified_total_hosp_beds=None,
-                 percentage_cases=0.4):
-        """
-        :param instance:
-        :param tiers: (list of dict): a list of the tiers characterized by a dictionary
-                with the following entries:
-                    {
-                        "transmission_reduction": float [0,1)
-                        "cocooning": float [0,1)
-                        "school_closure": int {0,1}
-                    }
-        :param case_threshold: (Surge threshold).
-        :param hosp_adm_thresholds: (dict of dict) thresholds
-                   { non_surge : thresholds level when case counts is below the case threshold
-                    surge : thresholds level when case counts is above the case threshold
-                   }
-        :param staffed_bed_thresholds: (dict of dict) similar entries as the hosp_adm_thresholds.
-        :param specified_total_hosp_beds [None] or [int]: if None, will use total_hosp_beds
-            from instance (from setup json file) as total hospital capacity. Otherwise,
-            will use specified integer instead.
-        :param percentage_cases: the CDC system uses total case counts as an indicators. However, we don't have a direct
-        interpretation of case counts in the model. We estimate the real total case count as some percentage of people
-        entering symptomatic compartment (ToIY). We use percentage_case to adjust ToIY.
-        """
-        self._instance = instance
-        self.tiers = tiers.tier
-        self.case_threshold = case_threshold
-        self.hosp_adm_thresholds = hosp_adm_thresholds
-        self.staffed_bed_thresholds = staffed_bed_thresholds
-        self.specified_total_hosp_beds = specified_total_hosp_beds
-        self.percentage_cases = percentage_cases
-        self.tier_history = None
-        self.surge_history = None
-        self.active_indicator_history = []
-
-    def reset(self):
-        self.tier_history = None
-        self.surge_history = None
-        self.active_indicator_history = []
-
-    def __repr__(self):
-        return f"CDC_{self.case_threshold}_{self.hosp_adm_thresholds['non_surge'][0]}_{self.staffed_bed_thresholds['non_surge'][0]}_{self.percentage_cases}"
-
-    def __call__(self, t, ToIHT, IH, ToIY, ICU):
-        N = self._instance.N
-
-        if self.tier_history is None:
-            self.tier_history = [None for i in range(t)]
-            self.surge_history = [None for i in range(t)]
-            self.active_indicator_history = [None for i in range(t)]
-        if len(self.tier_history) > t:
-            return
-
-        ToIHT = np.array(ToIHT)
-        IH = np.array(IH)
-        ToIY = np.array(ToIY)
-        ICU = np.array(ICU)
-
-        # Compute daily admissions moving sum
-        moving_avg_start = np.maximum(0, t - self._instance.moving_avg_len)
-        hos_adm_total = ToIHT.sum((1, 2))
-        hosp_adm_sum = 100000 * hos_adm_total[moving_avg_start:].sum() / N.sum((0, 1))
-
-        # Compute 7-day total new cases:
-        N = self._instance.N
-        ToIY_total = ToIY.sum((1, 2))
-        ToIY_total = ToIY_total[moving_avg_start:].sum() * 100000 / np.sum(N, axis=(0, 1))
-
-        # Compute 7-day average percent of COVID beds:
-        IH_total = IH.sum((1, 2)) + ICU.sum((1, 2))
-        if self.specified_total_hosp_beds is None:
-            IH_avg = IH_total[moving_avg_start:].mean() / self._instance.total_hosp_beds
-        else:
-            IH_avg = IH_total[moving_avg_start:].mean() / self.specified_total_hosp_beds
-
-        current_tier = self.tier_history[t - 1]
-
-        # Decide on the active hospital admission and staffed bed thresholds depending on the estimated
-        # case count level:
-        if ToIY_total * self.percentage_cases < self.case_threshold:
-            hosp_adm_thresholds = self.hosp_adm_thresholds["non_surge"]
-            staffed_bed_thresholds = self.staffed_bed_thresholds["non_surge"]
-            surge_state = 0
-        else:
-            hosp_adm_thresholds = self.hosp_adm_thresholds["surge"]
-            staffed_bed_thresholds = self.staffed_bed_thresholds["surge"]
-            surge_state = 1
-
-        # find hosp admission new tier:
-        hosp_adm_tier = find_tier(hosp_adm_thresholds, hosp_adm_sum)
-
-        # find staffed bed new tier:
-        staffed_bed_tier = find_tier(staffed_bed_thresholds, IH_avg)
-
-        # choose the stricter tier among tiers the two indicators suggesting:
-        new_tier = max(hosp_adm_tier, staffed_bed_tier)
-        # keep track of the active indicator for indicator statistics:
-        if hosp_adm_tier > staffed_bed_tier:
-            active_indicator = 0
-        elif hosp_adm_tier < staffed_bed_tier:
-            active_indicator = 1
-        else:
-            active_indicator = 2
-
-        if current_tier != new_tier:  # bump to the next tier
-            t_end = t + self.tiers[new_tier]["min_enforcing_time"]
-        else:  # stay in same tier for one more time period
-            new_tier = current_tier
-            t_end = t + 1
-
-        self.tier_history += [new_tier for i in range(t_end - t)]
-        self.surge_history += [surge_state for i in range(t_end - t)]
-        self.active_indicator_history += [active_indicator for i in range(t_end - t)]
 
 
 class MultiTierPolicy:
@@ -242,7 +99,8 @@ class MultiTierPolicy:
         else:
             previous_tier = None
 
-        if previous_tier == None or (new_tier != previous_tier and self.days_since_tier_change >= self.min_required_days_in_tier):
+        if previous_tier == None or \
+                (new_tier != previous_tier and self.days_since_tier_change >= self.min_required_days_in_tier):
             self.tier_history.append(new_tier)
             self.days_since_tier_change = 0
         else:
@@ -260,10 +118,6 @@ class VaccineGroup:
             v_tau_reduct,
             v_pi_reduct,
             N, I0, A, L, step_size):
-
-        """
-        Define each vaccine status as a group. Define each set of compartments for vaccine group.
-        """
 
         self.v_beta_reduct = v_beta_reduct
         self.v_tau_reduct = v_tau_reduct

@@ -1,0 +1,12 @@
+{
+  "calendar_csv": "calendar.csv",
+  "setup_json": "austin_setup.json",
+  "historical_hospital_timeseries_csv": "austin_hospital_home_timeseries.csv",
+  "historical_transmission_timeseries_csv": "transmission.csv",
+  "variant_json": "variant.json",
+  "variant_prevalence_csv": "variant_prevalence.csv",
+  "vaccine_info_json": "vaccines.json",
+  "vaccine_allocation_csv": "vaccine_allocation_fixed.csv",
+  "booster_allocation_csv": "booster_allocation_fixed.csv",
+  "tier_info_json": "tiers4.json"
+}
