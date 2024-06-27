@@ -2,6 +2,11 @@
 
 An example Jupyter Notebook, demo_for_discussion.ipynb, has been made available as a code tutorial.
 
+This code has been refactored and checked to make sure it preserves the same output/logic as 
+a previous version. However, it still contains known bugs (see below). Note that this version is
+70% faster after replacing for-loops with numpy vectorization. One simulation replication for the 
+full length of the given calendar.csv file takes about 20 seconds on an M1 2021 Macbook Pro.
+
 ## Requirements
 - Python 3 (this code was built using Python 3.4)
 - numpy, pandas
@@ -30,6 +35,7 @@ An example Jupyter Notebook, demo_for_discussion.ipynb, has been made available 
 - Need function signatures and parameter definitions for all classes and methods
 - Write least-squares (calibration), optimization, and input/output (importing/exporting intermediate simulation states) 
 to be compatible with this code version
+- Write CDC-tier policy (old class is incompatible with new update)
 - Incorporate new automatic calibration ideas/code (from Guyi)
 - Incorporate wastewater code (wastewater code updates have diverged significantly)
 - Fix messy data inputs -- there are too many .csv and .json files 
