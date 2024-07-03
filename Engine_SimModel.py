@@ -137,6 +137,8 @@ class SimModel:
                               "IY_to_D", "flow_to_IA", "flow_to_IY",
                               "flow_to_natural_immunity_S", "flow_to_vaccine_induced_immunity_S")
 
+        self.total_imbalance = []
+
     def init_rng(self):
         """
         Assigns self.rng to a newly created random number generator
@@ -362,28 +364,36 @@ class SimModel:
 
                 setattr(self, attribute, sum_across_vaccine_groups)
 
+            # if t >= 570:
+            #     print(t, np.sum(self.vaccine_groups[-2].S), np.sum(self.S), np.sum(self.E), np.sum(self.IA), np.sum(self.IY), np.sum(self.R), np.sum(self.D), np.sum(self.PA), np.sum(self.PY), np.sum(self.IH), np.sum(self.ICU))
+
             # We are interested in the history, not just current values, of
             #   certain variables -- save these current values
             for attribute in self.history_vars:
                 getattr(self, f"{attribute}_history").append(getattr(self, attribute))
 
             # Note: add this to tests! But take this out of code
-            # total_imbalance = np.sum(
-            #     self.S
-            #     + self.E
-            #     + self.IA
-            #     + self.IY
-            #     + self.R
-            #     + self.D
-            #     + self.PA
-            #     + self.PY
-            #     + self.IH
-            #     + self.ICU
-            # ) - np.sum(self.instance.N)
-            #
+            total_imbalance = np.sum(
+                self.S
+                + self.E
+                + self.IA
+                + self.IY
+                + self.R
+                + self.D
+                + self.PA
+                + self.PY
+                + self.IH
+                + self.ICU
+            ) - np.sum(self.instance.N)
+
+            self.total_imbalance.append(total_imbalance)
+
+            # if t >= 570:
+            #     print("Total imbalance " + str(total_imbalance))
+
             # assert (
             #         np.abs(total_imbalance) < 1e-2
-            # ), f"fPop unbalanced {total_imbalance} at time {self.instance.cal.calendar[t]}, {t}"
+            # ), f"fPop unbalanced"
 
     def simulate_t(self, t_date):
 
@@ -605,6 +615,8 @@ class SimModel:
 
                 self.vaccine_groups[3]._S[_t + 1] += _dSWaned + immune_escape_R
 
+                # if np.sum(S) != 0:
+                #     print(t, v_group.v_name, np.sum(v_group._S[_t+1]), np.sum(S), np.sum(_dS))
                 v_group._S[_t + 1] += S - _dS
 
                 v_group._PY[_t + 1] = PY + EPY - PYIY
@@ -671,12 +683,15 @@ class SimModel:
         S_temp = {}
         N_temp = {}
 
+        S_before = np.zeros((5, 2))
+
         for v_group in self.vaccine_groups:
-            # S_before += v_group.S
+            S_before += v_group.S
             S_temp[v_group.v_name] = v_group.S
             N_temp[v_group.v_name] = v_group.get_total_population(A * L)
 
         for v_group in self.vaccine_groups:
+
             out_sum = np.zeros((A, L))
 
             for vaccine_type in v_group.v_out:
@@ -703,11 +718,12 @@ class SimModel:
             in_sum = np.zeros((A, L))
 
             for vaccine_type in v_group.v_in:
+
                 for v_g in self.vaccine_groups:
                     if ((v_g.v_name == "waned" and vaccine_type == "booster") or
                             (v_g.v_name == "first_dose" and vaccine_type == "second_dose") or
                             (v_g.v_name == "unvax" and vaccine_type == "first_dose")):
-                        v_temp = v_g
+                        previous_vaccine_group = v_g
 
                 if current_datetime in self.vaccine.vaccine_allocation[vaccine_type]:
                     S_in = np.reshape(
@@ -715,10 +731,11 @@ class SimModel:
                         (A * L, 1),
                     )
 
-                    if v_group.v_name == "waned":
+                    if previous_vaccine_group.v_name == "waned":
                         num_eligible = N_temp["waned"] + N_temp["second_dose"]
                     else:
-                        num_eligible = self.vaccine.num_eligible_dict[v_temp.v_name][current_datetime]
+
+                        num_eligible = self.vaccine.num_eligible_dict[previous_vaccine_group.v_name][current_datetime]
 
                     ratio_S_N = np.array(
                         [
@@ -727,22 +744,25 @@ class SimModel:
                         ]
                     ).reshape((A, L))
 
-                    in_sum += (ratio_S_N * S_temp[v_temp.v_name]).astype(int)
+                    in_sum += (ratio_S_N * S_temp[previous_vaccine_group.v_name]).astype(int)
 
             v_group.S = v_group.S + (np.array(in_sum - out_sum))
 
-        # S_after = np.zeros((5, 2))
+            # if t == 577 and v_group.v_name == "second_dose":
+            #     breakpoint()
 
-        # for v_group in self.vaccine_groups:
-        #     S_after += v_group.S
-        #
-        # imbalance = np.abs(np.sum(S_before - S_after, axis=(0, 1)))
+        S_after = np.zeros((5, 2))
 
-        # Note: add this to tests! But take this out of code
-        # assert (imbalance < 1e-2).all(), (
-        #     f"fPop inbalance in vaccine flow in between compartment S "
-        #     f"{imbalance} at time {calendar[t]}, {t}"
-        # )
+        for v_group in self.vaccine_groups:
+            S_after += v_group.S
+
+        imbalance = np.abs(np.sum(S_before - S_after, axis=(0, 1)))
+
+        # # Note: add this to tests! But take this out of code
+        assert (imbalance < 1e-2).all(), (
+            f"fPop inbalance in vaccine flow in between compartment S "
+            f"{imbalance} at time {t}"
+        )
 
     def reset(self):
 

@@ -26,10 +26,13 @@ austin_model = sim_model_constructor.create_sim_model()
 tiers = TierInfo(austin_dict_filenames["tier_info_json"])
 
 thresholds = (-1, 100, 200, 500)
+# thresholds = (-1, 500, 500, 500)
 mtp = MultiTierPolicy(tiers, thresholds)
 
 austin_model.policy = mtp
 austin_model.simulate_time_period(945)
 
 print(austin_model.compute_rsq())
-print(np.sum(austin_model.ICU_history))
+print(np.sum(austin_model.S))
+
+breakpoint()
